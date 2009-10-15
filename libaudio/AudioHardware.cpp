@@ -42,27 +42,64 @@ static void * acoustic;
 const uint32_t AudioHardware::inputSamplingRates[] = {
         8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000
 };
+
+static uint32_t SND_DEVICE_CURRENT=-1;
+static uint32_t SND_DEVICE_HANDSET=-1;
+static uint32_t SND_DEVICE_SPEAKER=-1;
+static uint32_t SND_DEVICE_BT=-1;
+static uint32_t SND_DEVICE_BT_EC_OFF=-1;
+static uint32_t SND_DEVICE_HEADSET=-1;
+static uint32_t SND_DEVICE_HEADSET_AND_SPEAKER=-1;
+static uint32_t SND_DEVICE_IN_S_SADC_OUT_HANDSET=-1;
+static uint32_t SND_DEVICE_IN_S_SADC_OUT_SPEAKER_PHONE=-1;
+static uint32_t SND_DEVICE_TTY_HEADSET=-1;
+static uint32_t SND_DEVICE_TTY_HCO=-1;
+static uint32_t SND_DEVICE_TTY_VCO=-1;
+
+static uint32_t SND_DEVICE_TTY_FULL=-1;
+static uint32_t SND_DEVICE_CARKIT=-1;
+static uint32_t SND_DEVICE_FM_SPEAKER=-1;
+static uint32_t SND_DEVICE_FM_HEADSET=-1;
+static uint32_t SND_DEVICE_NO_MIC_HEADSET=-1;
 // ----------------------------------------------------------------------------
 
 AudioHardware::AudioHardware() :
     mInit(false), mMicMute(true), mBluetoothNrec(true), mBluetoothId(0),
-    mOutput(0), mSndEndpoints(NULL), mCurSndDevice(-1),
-    SND_DEVICE_CURRENT(-1),
-    SND_DEVICE_HANDSET(-1),
-    SND_DEVICE_SPEAKER(-1),
-    SND_DEVICE_HEADSET(-1),
-    SND_DEVICE_BT(-1),
-    SND_DEVICE_CARKIT(-1),
-    SND_DEVICE_TTY_FULL(-1),
-    SND_DEVICE_TTY_VCO(-1),
-    SND_DEVICE_TTY_HCO(-1),
-    SND_DEVICE_NO_MIC_HEADSET(-1),
-    SND_DEVICE_FM_HEADSET(-1),
-    SND_DEVICE_HEADSET_AND_SPEAKER(-1),
-    SND_DEVICE_FM_SPEAKER(-1),
-    SND_DEVICE_BT_EC_OFF(-1)
+    mOutput(0), mSndEndpoints(NULL), mCurSndDevice(-1)
 {
-
+    int m7xsnddriverfd = open("/dev/msm_snd", O_RDWR);
+    if (m7xsnddriverfd >= 0) {
+        int rc = ioctl(m7xsnddriverfd, SND_GET_NUM_ENDPOINTS, &mNumSndEndpoints);
+        if (rc >= 0) {
+            mSndEndpoints = new msm_snd_endpoint[mNumSndEndpoints];
+            mInit = true;
+            LOGV("constructed (%d SND endpoints)", rc);
+            struct msm_snd_endpoint *ept = mSndEndpoints;
+            for (int cnt = 0; cnt < mNumSndEndpoints; cnt++, ept++) {
+                ept->id = cnt;
+                ioctl(m7xsnddriverfd, SND_GET_ENDPOINT, ept);
+                LOGV("cnt = %d ept->name = %s ept->id = %d\n", cnt, ept->name, ept->id);
+#define CHECK_FOR(desc) if (!strcmp(ept->name, #desc)) SND_DEVICE_##desc = ept->id;
+                CHECK_FOR(CURRENT);
+                CHECK_FOR(HANDSET);
+                CHECK_FOR(SPEAKER);
+                CHECK_FOR(BT);
+                CHECK_FOR(BT_EC_OFF);
+                CHECK_FOR(HEADSET);
+                CHECK_FOR(HEADSET_AND_SPEAKER);
+                CHECK_FOR(IN_S_SADC_OUT_HANDSET);
+                CHECK_FOR(IN_S_SADC_OUT_SPEAKER_PHONE);
+                CHECK_FOR(TTY_HEADSET);
+                CHECK_FOR(TTY_HCO);
+                CHECK_FOR(TTY_VCO);
+#undef CHECK_FOR
+            }
+        }
+        else LOGE("Could not retrieve number of MSM SND endpoints.");
+		close(m7xsnddriverfd);
+	}
+	else LOGE("Could not open MSM SND driver.");
+#if 0
     int (*snd_get_num)();
     int (*snd_get_endpoint)(int, msm_snd_endpoint *);
     int (*set_acoustic_parameters)();
@@ -132,6 +169,7 @@ AudioHardware::AudioHardware() :
         CHECK_FOR(HEADSET_AND_SPEAKER) {}
 #undef CHECK_FOR
     }
+#endif
 }
 
 AudioHardware::~AudioHardware()
@@ -491,14 +529,16 @@ status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
 status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
 {
     /* currently this code doesn't work without the htc libacoustic */
+#if 0
     if (!acoustic)
         return 0;
+#endif
 
     Mutex::Autolock lock(mLock);
     uint32_t outputDevices = mOutput->devices();
     status_t ret = NO_ERROR;
-    int (*msm72xx_enable_audpp)(int);
-    msm72xx_enable_audpp = (int (*)(int))::dlsym(acoustic, "msm72xx_enable_audpp");
+    //int (*msm72xx_enable_audpp)(int);
+    //msm72xx_enable_audpp = (int (*)(int))::dlsym(acoustic, "msm72xx_enable_audpp");
     int audProcess = (ADRC_DISABLE | EQ_DISABLE | RX_IIR_DISABLE);
     int sndDevice = -1;
 
@@ -593,12 +633,14 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
 
     if (sndDevice != -1 && sndDevice != mCurSndDevice) {
         ret = doAudioRouteOrMute(sndDevice);
+#if 0
         if ((*msm72xx_enable_audpp) == 0 ) {
             LOGE("Could not open msm72xx_enable_audpp()");
         } else {
             msm72xx_enable_audpp(audProcess);
         }
         mCurSndDevice = sndDevice;
+#endif
     }
 
     return ret;

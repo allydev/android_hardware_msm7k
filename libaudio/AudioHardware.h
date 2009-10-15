@@ -242,21 +242,6 @@ private:
 
      friend class AudioStreamInMSM72xx;
             Mutex       mLock;
-
-            int SND_DEVICE_CURRENT;
-            int SND_DEVICE_HANDSET;
-            int SND_DEVICE_SPEAKER;
-            int SND_DEVICE_HEADSET;
-            int SND_DEVICE_BT;
-            int SND_DEVICE_CARKIT;
-            int SND_DEVICE_TTY_FULL;
-            int SND_DEVICE_TTY_VCO;
-            int SND_DEVICE_TTY_HCO;
-            int SND_DEVICE_NO_MIC_HEADSET;
-            int SND_DEVICE_FM_HEADSET;
-            int SND_DEVICE_HEADSET_AND_SPEAKER;
-            int SND_DEVICE_FM_SPEAKER;
-            int SND_DEVICE_BT_EC_OFF;
 };
 
 // ----------------------------------------------------------------------------
