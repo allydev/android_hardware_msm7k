@@ -1233,7 +1233,7 @@ AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterfa
 
     // open hardware output
     AudioOutputDescriptor *outputDesc = new AudioOutputDescriptor();
-    outputDesc->mDevice = (uint32_t)AudioSystem::DEVICE_OUT_SPEAKER;
+    outputDesc->mDevice = (uint32_t)AudioSystem::DEVICE_OUT_EARPIECE; // Setting the default device to earpiece
     mHardwareOutput = mpClientInterface->openOutput(&outputDesc->mDevice,
                                     &outputDesc->mSamplingRate,
                                     &outputDesc->mFormat,
@@ -1246,7 +1246,7 @@ AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterfa
                 outputDesc->mSamplingRate, outputDesc->mFormat, outputDesc->mChannels);
     } else {
         mOutputs.add(mHardwareOutput, outputDesc);
-        setOutputDevice(mHardwareOutput, (uint32_t)AudioSystem::DEVICE_OUT_SPEAKER, true);
+        setOutputDevice(mHardwareOutput, (uint32_t)AudioSystem::DEVICE_OUT_EARPIECE, false);
     }
 
     mA2dpOutput = 0;
@@ -1404,7 +1404,7 @@ uint32_t AudioPolicyManager::getDeviceForStrategy(routing_strategy strategy)
                                 if (device2 == 0) {
                                     device2 = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET;
                                     if (device2 == 0) {
-                                        device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_SPEAKER;
+                                        device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_EARPIECE;
                                         if (device == 0) {
                                             LOGE("getDeviceForStrategy() speaker device not found");
                                         }
