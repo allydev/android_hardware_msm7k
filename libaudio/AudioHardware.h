@@ -284,6 +284,7 @@ private:
             int mNumSndEndpoints;
             int mCurSndDevice;
             int m7xsnddriverfd;
+            bool        mDualMicEnabled;
 
      friend class AudioStreamInMSM72xx;
             Mutex       mLock;

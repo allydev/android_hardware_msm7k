@@ -36,6 +36,8 @@
 
 #define LOG_SND_RPC 0  // Set to 1 to log sound RPC's
 
+#define DUALMIC_KEY "dualmic_enabled"
+
 namespace android {
 static int audpre_index, tx_iir_index;
 static void * acoustic;
@@ -90,7 +92,7 @@ static uint32_t SND_DEVICE_NO_MIC_HEADSET=-1;
 
 AudioHardware::AudioHardware() :
     mInit(false), mMicMute(true), mBluetoothNrec(true), mBluetoothId(0),
-    mOutput(0), mSndEndpoints(NULL), mCurSndDevice(-1)
+    mOutput(0), mSndEndpoints(NULL), mCurSndDevice(-1), mDualMicEnabled(false)
 {
    if (get_audpp_filter() == 0) {
            audpp_filter_inited = true;
@@ -269,6 +271,7 @@ status_t AudioHardware::setMicMute_nosync(bool state)
 {
     if (mMicMute != state) {
         mMicMute = state;
+
         return doAudioRouteOrMute(SND_DEVICE_CURRENT);
     }
     return NO_ERROR;
@@ -320,12 +323,33 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
             doRouting(NULL);
         }
     }
+    key = String8(DUALMIC_KEY);
+    if (param.get(key, value) == NO_ERROR) {
+        if (value == "true") {
+            mDualMicEnabled = true;
+            LOGI("DualMike feature Enabled");
+        } else {
+            mDualMicEnabled = false;
+            LOGI("DualMike feature Disabled");
+        }
+        doRouting(NULL);
+    }
     return NO_ERROR;
 }
 
 String8 AudioHardware::getParameters(const String8& keys)
 {
     AudioParameter param = AudioParameter(keys);
+    String8 value;
+
+    String8 key = String8(DUALMIC_KEY);
+
+    if (param.get(key, value) == NO_ERROR) {
+        value = String8(mDualMicEnabled ? "true" : "false");
+        param.add(key, value);
+    }
+
+    LOGV("AudioHardware::getParameters() %s", param.toString().string());
     return param.toString();
 }
 
@@ -957,7 +981,7 @@ status_t AudioHardware::setVoiceVolume(float v)
 
     int vol = lrint(v * 7.0);
     LOGD("setVoiceVolume(%f)\n", v);
-    LOGI("Setting in-call volume to %d (available range is 0 to 5)\n", vol);
+    LOGI("Setting in-call volume to %d (available range is 0 to 7)\n", vol);
 
     Mutex::Autolock lock(mLock);
     set_volume_rpc(SND_DEVICE_CURRENT, SND_METHOD_VOICE, vol, m7xsnddriverfd);
@@ -974,6 +998,8 @@ status_t AudioHardware::setMasterVolume(float v)
     set_volume_rpc(SND_DEVICE_SPEAKER, SND_METHOD_VOICE, vol, m7xsnddriverfd);
     set_volume_rpc(SND_DEVICE_BT,      SND_METHOD_VOICE, vol, m7xsnddriverfd);
     set_volume_rpc(SND_DEVICE_HEADSET, SND_METHOD_VOICE, vol, m7xsnddriverfd);
+    set_volume_rpc(SND_DEVICE_IN_S_SADC_OUT_HANDSET, SND_METHOD_VOICE, vol, m7xsnddriverfd);
+    set_volume_rpc(SND_DEVICE_IN_S_SADC_OUT_SPEAKER_PHONE, SND_METHOD_VOICE, vol, m7xsnddriverfd);
 
     // We return an error code here to let the audioflinger do in-software
     // volume on top of the maximum volume that we set through the SND API.
@@ -1014,7 +1040,6 @@ static status_t do_route_audio_rpc(uint32_t device,
         LOGE("snd_set_device error.");
         return -EIO;
     }
-
     return NO_ERROR;
 }
 
@@ -1133,6 +1158,16 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
             LOGI("Routing audio to Handset\n");
             sndDevice = SND_DEVICE_HANDSET;
             audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
+        }
+    }
+
+    if (mDualMicEnabled && mMode == AudioSystem::MODE_IN_CALL) {
+        if (sndDevice == SND_DEVICE_HANDSET) {
+            LOGI("Routing audio to handset with DualMike enabled\n");
+            sndDevice = SND_DEVICE_IN_S_SADC_OUT_HANDSET;
+        } else if (sndDevice == SND_DEVICE_SPEAKER) {
+            LOGI("Routing audio to speakerphone with DualMike enabled\n");
+            sndDevice = SND_DEVICE_IN_S_SADC_OUT_SPEAKER_PHONE;
         }
     }
 
