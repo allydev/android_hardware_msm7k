@@ -51,8 +51,14 @@ namespace android {
 #define ADRC_DISABLE 0x0000
 #define EQ_ENABLE    0x0002
 #define EQ_DISABLE   0x0000
-#define RX_IIR_ENABLE   0x0004
-#define RX_IIR_DISABLE  0x0000
+#define RX_IIR_ENABLE  0x0004
+#define RX_IIR_DISABLE 0x0000
+#define MBADRC_ENABLE  0x0010
+#define MBADRC_DISABLE 0x0000
+
+#define AGC_ENABLE     0x0001
+#define NS_ENABLE      0x0002
+#define TX_IIR_ENABLE  0x0004
 
 struct eq_filter_type {
     int16_t gain;
@@ -69,6 +75,57 @@ struct eqalizer {
 struct rx_iir_filter {
     uint16_t num_bands;
     uint16_t iir_params[48];
+};
+
+struct adrc_filter {
+    uint16_t adrc_params[8];
+};
+
+struct tx_iir {
+        uint16_t  cmd_id;
+        uint16_t  active_flag;
+        uint16_t  num_bands;
+        uint16_t iir_params[48];
+};
+
+struct ns {
+        uint16_t  cmd_id;
+        uint16_t  ec_mode_new;
+        uint16_t  dens_gamma_n;
+        uint16_t  dens_nfe_block_size;
+        uint16_t  dens_limit_ns;
+        uint16_t  dens_limit_ns_d;
+        uint16_t  wb_gamma_e;
+        uint16_t  wb_gamma_n;
+};
+
+struct tx_agc {
+        uint16_t  cmd_id;
+        uint16_t  tx_agc_param_mask;
+        uint16_t  tx_agc_enable_flag;
+        uint16_t  static_gain;
+        int16_t   adaptive_gain_flag;
+        uint16_t  agc_params[19];
+};
+
+struct adrc_config {
+    uint16_t adrc_band_params[10];
+};
+
+struct adrc_ext_buf {
+    int16_t buff[196];
+};
+
+struct mbadrc_filter {
+    uint16_t num_bands;
+    uint16_t down_samp_level;
+    uint16_t adrc_delay;
+    uint16_t ext_buf_size;
+    uint16_t ext_partition;
+    uint16_t ext_buf_msw;
+    uint16_t ext_buf_lsw;
+    struct adrc_config adrc_band[5];
+    struct adrc_ext_buf  ext_buf;
 };
 
 struct msm_audio_config {

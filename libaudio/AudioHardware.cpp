@@ -43,6 +43,27 @@ const uint32_t AudioHardware::inputSamplingRates[] = {
         8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000
 };
 
+static int get_audpp_filter(void);
+static int msm72xx_enable_audpp(uint16_t enable_mask, uint32_t device);
+
+static struct rx_iir_filter iir_cfg[3];
+static struct adrc_filter adrc_cfg[3];
+static struct mbadrc_filter mbadrc_cfg[3];
+eqalizer eqalizer[3];
+static uint16_t adrc_flag[3];
+static uint16_t eq_flag[3];
+static uint16_t rx_iir_flag[3];
+static bool audpp_filter_inited = false;
+static bool adrc_filter_exists[3];
+static bool mbadrc_filter_exists[3];
+
+static struct tx_iir tx_iir_cfg[9];
+static struct ns ns_cfg[9];
+static struct tx_agc tx_agc_cfg[9];
+
+#define PCM_CTL_DEVICE "/dev/msm_pcm_ctl"
+#define PREPROC_CTL_DEVICE "/dev/msm_preproc_ctl"
+
 static uint32_t SND_DEVICE_CURRENT=-1;
 static uint32_t SND_DEVICE_HANDSET=-1;
 static uint32_t SND_DEVICE_SPEAKER=-1;
@@ -67,6 +88,10 @@ AudioHardware::AudioHardware() :
     mInit(false), mMicMute(true), mBluetoothNrec(true), mBluetoothId(0),
     mOutput(0), mSndEndpoints(NULL), mCurSndDevice(-1)
 {
+   if (get_audpp_filter() == 0) {
+           audpp_filter_inited = true;
+   }
+
     m7xsnddriverfd = open("/dev/msm_snd", O_RDWR);
     if (m7xsnddriverfd >= 0) {
         int rc = ioctl(m7xsnddriverfd, SND_GET_NUM_ENDPOINTS, &mNumSndEndpoints);
@@ -96,79 +121,8 @@ AudioHardware::AudioHardware() :
             }
         }
         else LOGE("Could not retrieve number of MSM SND endpoints.");
-	}
+    }
 	else LOGE("Could not open MSM SND driver.");
-#if 0
-    int (*snd_get_num)();
-    int (*snd_get_endpoint)(int, msm_snd_endpoint *);
-    int (*set_acoustic_parameters)();
-
-    struct msm_snd_endpoint *ept;
-
-    acoustic = ::dlopen("/system/lib/libhtc_acoustic.so", RTLD_NOW);
-    if (acoustic == NULL ) {
-        LOGE("Could not open libhtc_acoustic.so");
-        /* this is not really an error on non-htc devices... */
-        mNumSndEndpoints = 0;
-        mInit = true;
-        return;
-    }
-
-    set_acoustic_parameters = (int (*)(void))::dlsym(acoustic, "set_acoustic_parameters");
-    if ((*set_acoustic_parameters) == 0 ) {
-        LOGE("Could not open set_acoustic_parameters()");
-        return;
-    }
-
-    int rc = set_acoustic_parameters();
-    if (rc < 0) {
-        LOGE("Could not set acoustic parameters to share memory: %d", rc);
-//        return;
-    }
-
-    snd_get_num = (int (*)(void))::dlsym(acoustic, "snd_get_num_endpoints");
-    if ((*snd_get_num) == 0 ) {
-        LOGE("Could not open snd_get_num()");
-//        return;
-    }
-
-    mNumSndEndpoints = snd_get_num();
-    LOGD("mNumSndEndpoints = %d", mNumSndEndpoints);
-    mSndEndpoints = new msm_snd_endpoint[mNumSndEndpoints];
-    mInit = true;
-    LOGV("constructed %d SND endpoints)", mNumSndEndpoints);
-    ept = mSndEndpoints;
-    snd_get_endpoint = (int (*)(int, msm_snd_endpoint *))::dlsym(acoustic, "snd_get_endpoint");
-    if ((*snd_get_endpoint) == 0 ) {
-        LOGE("Could not open snd_get_endpoint()");
-        return;
-    }
-
-    for (int cnt = 0; cnt < mNumSndEndpoints; cnt++, ept++) {
-        ept->id = cnt;
-        snd_get_endpoint(cnt, ept);
-#define CHECK_FOR(desc) \
-        if (!strcmp(ept->name, #desc)) { \
-            SND_DEVICE_##desc = ept->id; \
-            LOGD("BT MATCH " #desc); \
-        } else
-        CHECK_FOR(CURRENT)
-        CHECK_FOR(HANDSET)
-        CHECK_FOR(SPEAKER)
-        CHECK_FOR(BT)
-        CHECK_FOR(BT_EC_OFF)
-        CHECK_FOR(HEADSET)
-        CHECK_FOR(CARKIT)
-        CHECK_FOR(TTY_FULL)
-        CHECK_FOR(TTY_VCO)
-        CHECK_FOR(TTY_HCO)
-        CHECK_FOR(NO_MIC_HEADSET)
-        CHECK_FOR(FM_HEADSET)
-        CHECK_FOR(FM_SPEAKER)
-        CHECK_FOR(HEADSET_AND_SPEAKER) {}
-#undef CHECK_FOR
-    }
-#endif
 }
 
 AudioHardware::~AudioHardware()
@@ -371,6 +325,546 @@ String8 AudioHardware::getParameters(const String8& keys)
     return param.toString();
 }
 
+int check_and_set_audpp_parameters(char *buf, int size)
+{
+    char *p, *ps;
+    static const char *const seps = ",";
+    int table_num;
+    int i, j;
+    int device_id = 0;
+    int samp_index = 0;
+    eq_filter_type eq[12];
+    int fd;
+    void *audioeq;
+    void *(*eq_cal)(int32_t, int32_t, int32_t, uint16_t, int32_t, int32_t *, int32_t *, uint16_t *);
+    uint16_t numerator[6];
+    uint16_t denominator[4];
+    uint16_t shift[2];
+
+    fd = open(PCM_CTL_DEVICE, O_RDWR);
+    if (fd < 0) {
+        LOGE("Cannot open PCM Ctl device");
+        return -EPERM;
+    }
+    if ((buf[0] == 'A') && ((buf[1] == '1') || (buf[1] == '2') || (buf[1] == '3'))) {
+        /* IIR filter */
+        if(buf[1] == '1') device_id=0;
+        if(buf[1] == '2') device_id=1;
+        if(buf[1] == '3') device_id=2;
+        if (!(p = strtok(buf, ",")))
+            goto token_err;
+
+        /* Table header */
+        table_num = strtol(p + 1, &ps, 10);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        /* Table description */
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        for (i = 0; i < 48; i++) {
+            j = (i >= 40)? i : ((i % 2)? (i - 1) : (i + 1));
+            iir_cfg[device_id].iir_params[j] = (uint16_t)strtol(p, &ps, 16);
+            if (!(p = strtok(NULL, seps)))
+                goto token_err;
+        }
+        rx_iir_flag[device_id] = (uint16_t)strtol(p, &ps, 16);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        iir_cfg[device_id].num_bands = (uint16_t)strtol(p, &ps, 16);
+
+    } else if ((buf[0] == 'B') && ((buf[1] == '1') || (buf[1] == '2') || (buf[1] == '3'))) {
+        /* This is the ADRC record we are looking for.  Tokenize it */
+        if(buf[1] == '1') device_id=0;
+        if(buf[1] == '2') device_id=1;
+        if(buf[1] == '3') device_id=2;
+        adrc_filter_exists[device_id] = true;
+        if (!(p = strtok(buf, ",")))
+            goto token_err;
+
+        /* Table header */
+        table_num = strtol(p + 1, &ps, 10);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        /* Table description */
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        adrc_flag[device_id] = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        adrc_cfg[device_id].adrc_params[0] = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        adrc_cfg[device_id].adrc_params[1] = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        adrc_cfg[device_id].adrc_params[2] = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        adrc_cfg[device_id].adrc_params[3] = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        adrc_cfg[device_id].adrc_params[4] = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        adrc_cfg[device_id].adrc_params[5] = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        adrc_cfg[device_id].adrc_params[6] = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        adrc_cfg[device_id].adrc_params[7] = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+    } else if (buf[0] == 'C' && ((buf[1] == '1') || (buf[1] == '2') || (buf[1] == '3'))) {
+        /* This is the EQ record we are looking for.  Tokenize it */
+        if(buf[1] == '1') device_id=0;
+        if(buf[1] == '2') device_id=1;
+        if(buf[1] == '3') device_id=2;
+        if (!(p = strtok(buf, ",")))
+            goto token_err;
+
+        /* Table header */
+        table_num = strtol(p + 1, &ps, 10);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        /* Table description */
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        eq_flag[device_id] = (uint16_t)strtol(p, &ps, 16);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        LOGI("EQ flag = %02x.", eq_flag[device_id]);
+
+        audioeq = ::dlopen("/system/lib/libaudioeq.so", RTLD_NOW);
+        if (audioeq == NULL) {
+            LOGE("audioeq library open failure");
+            return -1;
+        }
+        eq_cal = (void *(*) (int32_t, int32_t, int32_t, uint16_t, int32_t, int32_t *, int32_t *, uint16_t *))::dlsym(audioeq, "audioeq_calccoefs");
+        memset(&eqalizer[device_id], 0, sizeof(eqalizer));
+        /* Temp add the bands here */
+        eqalizer[device_id].bands = 8;
+        for (i = 0; i < eqalizer[device_id].bands; i++) {
+
+            eq[i].gain = (uint16_t)strtol(p, &ps, 16);
+
+            if (!(p = strtok(NULL, seps)))
+                goto token_err;
+            eq[i].freq = (uint16_t)strtol(p, &ps, 16);
+
+            if (!(p = strtok(NULL, seps)))
+                goto token_err;
+            eq[i].type = (uint16_t)strtol(p, &ps, 16);
+
+            if (!(p = strtok(NULL, seps)))
+                goto token_err;
+            eq[i].qf = (uint16_t)strtol(p, &ps, 16);
+
+            if (!(p = strtok(NULL, seps)))
+                goto token_err;
+
+            eq_cal(eq[i].gain, eq[i].freq, 48000, eq[i].type, eq[i].qf, (int32_t*)numerator, (int32_t *)denominator, shift);
+            for (j = 0; j < 6; j++) {
+                eqalizer[device_id].params[ ( i * 6) + j] = numerator[j];
+            }
+            for (j = 0; j < 4; j++) {
+                eqalizer[device_id].params[(eqalizer[device_id].bands * 6) + (i * 4) + j] = denominator[j];
+            }
+            eqalizer[device_id].params[(eqalizer[device_id].bands * 10) + i] = shift[0];
+        }
+        ::dlclose(audioeq);
+
+    } else if ((buf[0] == 'D') && ((buf[1] == '1') || (buf[1] == '2') || (buf[1] == '3'))) {
+     /* This is the MB_ADRC record we are looking for.  Tokenize it */
+        if(buf[1] == '1') device_id=0;
+        if(buf[1] == '2') device_id=1;
+        if(buf[1] == '3') device_id=2;
+        mbadrc_filter_exists[device_id] = true;
+        if (!(p = strtok(buf, ",")))
+            goto token_err;
+          /* Table header */
+        table_num = strtol(p + 1, &ps, 10);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        /* Table description */
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        mbadrc_cfg[device_id].num_bands = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        mbadrc_cfg[device_id].down_samp_level = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        mbadrc_cfg[device_id].adrc_delay = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        mbadrc_cfg[device_id].ext_buf_size = (uint16_t)strtol(p, &ps, 16);
+        int ext_buf_count = mbadrc_cfg[device_id].ext_buf_size / 2;
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        mbadrc_cfg[device_id].ext_partition = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        mbadrc_cfg[device_id].ext_buf_msw = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        mbadrc_cfg[device_id].ext_buf_lsw = (uint16_t)strtol(p, &ps, 16);
+
+        for(i = 0;i < mbadrc_cfg[device_id].num_bands; i++) {
+            for(j = 0; j < 10; j++) {
+                if (!(p = strtok(NULL, seps)))
+                    goto token_err;
+                mbadrc_cfg[device_id].adrc_band[i].adrc_band_params[j] = (uint16_t)strtol(p, &ps, 16);
+            }
+        }
+
+        for(i = 0;i < mbadrc_cfg[device_id].ext_buf_size/2; i++) {
+            if (!(p = strtok(NULL, seps)))
+                goto token_err;
+            mbadrc_cfg[device_id].ext_buf.buff[i] = (uint16_t)strtol(p, &ps, 16);
+            }
+    }else if ((buf[0] == 'E') || (buf[0] == 'F') || (buf[0] == 'G')){
+     //Pre-Processing Features TX_IIR,NS,AGC
+        switch (buf[1]) {
+                case '1':
+                        samp_index = 0;
+                        break;
+                case '2':
+                        samp_index = 1;
+                        break;
+                case '3':
+                        samp_index = 2;
+                        break;
+                case '4':
+                        samp_index = 3;
+                        break;
+                case '5':
+                        samp_index = 4;
+                        break;
+                case '6':
+                        samp_index = 5;
+                        break;
+                case '7':
+                        samp_index = 6;
+                        break;
+                case '8':
+                        samp_index = 7;
+                        break;
+                case '9':
+                        samp_index = 8;
+                        break;
+                default:
+                        return -EINVAL;
+                        break;
+        }
+
+        if (buf[0] == 'E')  {
+        /* TX_IIR filter */
+        if (!(p = strtok(buf, ","))){
+            goto token_err;}
+
+        /* Table header */
+        table_num = strtol(p + 1, &ps, 10);
+        if (!(p = strtok(NULL, seps))){
+            goto token_err;}
+        /* Table description */
+        if (!(p = strtok(NULL, seps))){
+            goto token_err;}
+
+        for (i = 0; i < 48; i++) {
+            j = (i >= 40)? i : ((i % 2)? (i - 1) : (i + 1));
+            tx_iir_cfg[samp_index].iir_params[j] = (uint16_t)strtol(p, &ps, 16);
+            if (!(p = strtok(NULL, seps))){
+                goto token_err;}
+        }
+
+        tx_iir_cfg[samp_index].active_flag = (uint16_t)strtol(p, &ps, 16);
+        if (!(p = strtok(NULL, seps))){
+            goto token_err;}
+
+        tx_iir_cfg[samp_index].num_bands = (uint16_t)strtol(p, &ps, 16);
+
+        tx_iir_cfg[samp_index].cmd_id = 0;
+
+        } else if(buf[0] == 'F')  {
+        /* AGC filter */
+        if (!(p = strtok(buf, ",")))
+            goto token_err;
+
+        /* Table header */
+        table_num = strtol(p + 1, &ps, 10);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        /* Table description */
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        tx_agc_cfg[samp_index].cmd_id = (uint16_t)strtol(p, &ps, 16);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        tx_agc_cfg[samp_index].tx_agc_param_mask = (uint16_t)strtol(p, &ps, 16);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        tx_agc_cfg[samp_index].tx_agc_enable_flag = (uint16_t)strtol(p, &ps, 16);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        tx_agc_cfg[samp_index].static_gain = (uint16_t)strtol(p, &ps, 16);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        tx_agc_cfg[samp_index].adaptive_gain_flag = (uint16_t)strtol(p, &ps, 16);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        for (i = 0; i < 19; i++) {
+            tx_agc_cfg[samp_index].agc_params[i] = (uint16_t)strtol(p, &ps, 16);
+            if (!(p = strtok(NULL, seps)))
+                goto token_err;
+            }
+
+        } else if ((buf[0] == 'G')) {
+        /* This is the NS record we are looking for.  Tokenize it */
+        if (!(p = strtok(buf, ",")))
+            goto token_err;
+
+        /* Table header */
+        table_num = strtol(p + 1, &ps, 10);
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+
+        /* Table description */
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        ns_cfg[samp_index].cmd_id = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        ns_cfg[samp_index].ec_mode_new = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        ns_cfg[samp_index].dens_gamma_n = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        ns_cfg[samp_index].dens_nfe_block_size = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        ns_cfg[samp_index].dens_limit_ns = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        ns_cfg[samp_index].dens_limit_ns_d = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        ns_cfg[samp_index].wb_gamma_e = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        ns_cfg[samp_index].wb_gamma_n = (uint16_t)strtol(p, &ps, 16);
+
+        if (!(p = strtok(NULL, seps)))
+            goto token_err;
+        }
+    }
+    close(fd);
+    return 0;
+
+token_err:
+    LOGE("malformatted pcm control buffer");
+    return -EINVAL;
+}
+
+static int get_audpp_filter(void)
+{
+    struct stat st;
+    char *read_buf;
+    char *next_str, *current_str;
+    int csvfd;
+
+    LOGI("get_audpp_filter");
+    static const char *const path =
+        "/system/etc/AudioFilter.csv";
+    csvfd = open(path, O_RDONLY);
+    if (csvfd < 0) {
+        /* failed to open normal acoustic file ... */
+        LOGE("failed to open AUDIO_NORMAL_FILTER %s: %s (%d).",
+             path, strerror(errno), errno);
+        return -1;
+    } else LOGI("open %s success.", path);
+
+    if (fstat(csvfd, &st) < 0) {
+        LOGE("failed to stat %s: %s (%d).",
+             path, strerror(errno), errno);
+        close(csvfd);
+        return -1;
+    }
+
+    read_buf = (char *) mmap(0, st.st_size,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE,
+                    csvfd, 0);
+
+    if (read_buf == MAP_FAILED) {
+        LOGE("failed to mmap parameters file: %s (%d)",
+             strerror(errno), errno);
+        close(csvfd);
+        return -1;
+    }
+
+    current_str = read_buf;
+
+    while (1) {
+        int len;
+        next_str = strchr(current_str, '\n');
+        if (!next_str)
+           break;
+        len = next_str - current_str;
+        *next_str++ = '\0';
+        if (check_and_set_audpp_parameters(current_str, len)) {
+            LOGI("failed to set audpp parameters, exiting.");
+            munmap(read_buf, st.st_size);
+            close(csvfd);
+            return -1;
+        }
+        current_str = next_str;
+    }
+
+    munmap(read_buf, st.st_size);
+    close(csvfd);
+    return 0;
+}
+
+static int msm72xx_enable_audpp(uint16_t enable_mask, uint32_t device)
+{
+    int fd;
+    int device_id=0;
+
+    if (!audpp_filter_inited) return -EINVAL;
+
+    LOGI("SET DEVICE - %d",device);
+    if(device == SND_DEVICE_SPEAKER)
+    {
+            device_id = 0;
+            LOGI("SET DEVICE TO SND_DEVICE_SPEAKER device_id=0 .");
+    }
+    if(device == SND_DEVICE_HANDSET)
+    {
+            device_id = 1;
+             LOGI("SET DEVICE - SND_DEVICE_HANDSET device_id=1 .");
+    }
+    if(device == SND_DEVICE_HEADSET)
+    {
+            device_id = 2;
+            LOGI("SET DEVICE - SND_DEVICE_HEADSET device_id=2 .");
+    }
+
+    fd = open(PCM_CTL_DEVICE, O_RDWR);
+    if (fd < 0) {
+        LOGE("Cannot open PCM Ctl device");
+        return -EPERM;
+    }
+
+    if(mbadrc_filter_exists[device_id])
+    {
+       if (ioctl(fd, AUDIO_SET_MBADRC, &mbadrc_cfg[device_id]) < 0)
+        {
+            LOGE("set mbadrc filter error");
+            return -EIO;
+        }
+    }
+    else if (adrc_filter_exists[device_id])
+    {
+        if (adrc_flag[device_id] == 0 && (enable_mask & ADRC_ENABLE))
+            enable_mask &= ~ADRC_ENABLE;
+        else if(enable_mask & ADRC_ENABLE)
+        {
+            LOGI("ADRC Filter ADRC FLAG = %02x.", adrc_flag[device_id]);
+            LOGI("ADRC Filter COMP THRESHOLD = %02x.", adrc_cfg[device_id].adrc_params[0]);
+            LOGI("ADRC Filter COMP SLOPE = %02x.", adrc_cfg[device_id].adrc_params[1]);
+            LOGI("ADRC Filter COMP RMS TIME = %02x.", adrc_cfg[device_id].adrc_params[2]);
+            LOGI("ADRC Filter COMP ATTACK[0] = %02x.", adrc_cfg[device_id].adrc_params[3]);
+            LOGI("ADRC Filter COMP ATTACK[1] = %02x.", adrc_cfg[device_id].adrc_params[4]);
+            LOGI("ADRC Filter COMP RELEASE[0] = %02x.", adrc_cfg[device_id].adrc_params[5]);
+            LOGI("ADRC Filter COMP RELEASE[1] = %02x.", adrc_cfg[device_id].adrc_params[6]);
+            LOGI("ADRC Filter COMP DELAY = %02x.", adrc_cfg[device_id].adrc_params[7]);
+            if (ioctl(fd, AUDIO_SET_ADRC, &adrc_cfg[device_id]) < 0)
+            {
+                LOGE("set adrc filter error.");
+                return -EIO;
+            }
+        }
+    }
+
+    if (eq_flag[device_id] == 0 && (enable_mask & EQ_ENABLE))
+        enable_mask &= ~EQ_ENABLE;
+    else if (enable_mask & EQ_ENABLE)
+    {
+	LOGI("Setting EQ Filter");
+        if (ioctl(fd, AUDIO_SET_EQ, &eqalizer[device_id]) < 0) {
+            LOGE("set Equalizer error.");
+            return -EIO;
+        }
+    }
+
+    if (rx_iir_flag[device_id] == 0 && (enable_mask & IIR_ENABLE))
+        enable_mask &= ~IIR_ENABLE;
+    else if (enable_mask & IIR_ENABLE)
+    {
+        LOGI("IIR Filter FLAG = %02x.", rx_iir_flag[device_id]);
+        LOGI("IIR NUMBER OF BANDS = %02x.", iir_cfg[device_id].num_bands);
+        LOGI("IIR Filter N1 = %02x.", iir_cfg[device_id].iir_params[0]);
+        LOGI("IIR Filter N2 = %02x.",  iir_cfg[device_id].iir_params[1]);
+        LOGI("IIR Filter N3 = %02x.",  iir_cfg[device_id].iir_params[2]);
+        LOGI("IIR Filter N4 = %02x.",  iir_cfg[device_id].iir_params[3]);
+        LOGI("IIR FILTER M1 = %02x.",  iir_cfg[device_id].iir_params[24]);
+        LOGI("IIR FILTER M2 = %02x.", iir_cfg[device_id].iir_params[25]);
+        LOGI("IIR FILTER M3 = %02x.",  iir_cfg[device_id].iir_params[26]);
+        LOGI("IIR FILTER M4 = %02x.",  iir_cfg[device_id].iir_params[27]);
+        LOGI("IIR FILTER M16 = %02x.",  iir_cfg[device_id].iir_params[39]);
+        LOGI("IIR FILTER SF1 = %02x.",  iir_cfg[device_id].iir_params[40]);
+         if (ioctl(fd, AUDIO_SET_RX_IIR, &iir_cfg[device_id]) < 0)
+        {
+            LOGE("set rx iir filter error.");
+            return -EIO;
+        }
+    }
+
+    LOGE("msm72xx_enable_audpp: 0x%04x", enable_mask);
+    if (ioctl(fd, AUDIO_ENABLE_AUDPP, &enable_mask) < 0) {
+        LOGE("enable audpp error");
+        close(fd);
+        return -EPERM;
+    }
+
+    close(fd);
+    return 0;
+}
 
 static unsigned calculate_audpre_table_index(unsigned index)
 {
@@ -528,17 +1022,13 @@ status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
 status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
 {
     /* currently this code doesn't work without the htc libacoustic */
-#if 0
-    if (!acoustic)
-        return 0;
-#endif
 
     Mutex::Autolock lock(mLock);
     uint32_t outputDevices = mOutput->devices();
     status_t ret = NO_ERROR;
     //int (*msm72xx_enable_audpp)(int);
     //msm72xx_enable_audpp = (int (*)(int))::dlsym(acoustic, "msm72xx_enable_audpp");
-    int audProcess = (ADRC_DISABLE | EQ_DISABLE | RX_IIR_DISABLE);
+    int audProcess = (ADRC_DISABLE | EQ_DISABLE | RX_IIR_DISABLE | MBADRC_DISABLE);
     int sndDevice = -1;
 
     if (input != NULL) {
@@ -553,7 +1043,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                     (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
                     LOGI("Routing audio to Wired Headset and Speaker\n");
                     sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-                    audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+                    audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
                 } else {
                     LOGI("Routing audio to Wired Headset\n");
                     sndDevice = SND_DEVICE_HEADSET;
@@ -562,7 +1052,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                 if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                     LOGI("Routing audio to Speakerphone\n");
                     sndDevice = SND_DEVICE_SPEAKER;
-                    audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+                    audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
                 } else {
                     LOGI("Routing audio to Handset\n");
                     sndDevice = SND_DEVICE_HANDSET;
@@ -594,16 +1084,16 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                    (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
             LOGI("Routing audio to Wired Headset and Speaker\n");
             sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
         } else if (outputDevices & AudioSystem::DEVICE_OUT_FM_SPEAKER) {
             LOGI("Routing audio to FM Speakerphone (%d,%x)\n", mMode, outputDevices);
             sndDevice = SND_DEVICE_FM_SPEAKER;
-            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_DISABLE);
+            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_DISABLE | MBADRC_ENABLE);
         } else if (outputDevices & AudioSystem::DEVICE_OUT_FM_HEADPHONE) {
             if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                 LOGI("Routing audio to FM Headset and Speaker (%d,%x)\n", mMode, outputDevices);
                 sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-                audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+                audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
             } else {
                 LOGI("Routing audio to FM Headset (%d,%x)\n", mMode, outputDevices);
                 sndDevice = SND_DEVICE_FM_HEADSET;
@@ -612,7 +1102,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
             if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                 LOGI("Routing audio to No microphone Wired Headset and Speaker (%d,%x)\n", mMode, outputDevices);
                 sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-                audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+                audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
             } else {
                 LOGI("Routing audio to No microphone Wired Headset (%d,%x)\n", mMode, outputDevices);
                 sndDevice = SND_DEVICE_NO_MIC_HEADSET;
@@ -620,26 +1110,21 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
         } else if (outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) {
             LOGI("Routing audio to Wired Headset\n");
             sndDevice = SND_DEVICE_HEADSET;
+            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
         } else if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
             LOGI("Routing audio to Speakerphone\n");
             sndDevice = SND_DEVICE_SPEAKER;
-            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
         } else {
             LOGI("Routing audio to Handset\n");
             sndDevice = SND_DEVICE_HANDSET;
+            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
         }
     }
 
     if (sndDevice != -1 && sndDevice != mCurSndDevice) {
         ret = doAudioRouteOrMute(sndDevice);
-#if 0
-        if ((*msm72xx_enable_audpp) == 0 ) {
-            LOGE("Could not open msm72xx_enable_audpp()");
-        } else {
-            msm72xx_enable_audpp(audProcess);
-        }
-        mCurSndDevice = sndDevice;
-#endif
+        msm72xx_enable_audpp(audProcess,sndDevice);
     }
 
     return ret;
@@ -921,6 +1406,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         AudioHardware* hw, uint32_t devices, int *pFormat, uint32_t *pChannels, uint32_t *pRate,
         AudioSystem::audio_in_acoustics acoustic_flags)
 {
+    int enable_mask = (TX_IIR_ENABLE | AGC_ENABLE | NS_ENABLE);
     if (pFormat == 0 || *pFormat != AUDIO_HW_IN_FORMAT) {
         *pFormat = AUDIO_HW_IN_FORMAT;
         return BAD_VALUE;
@@ -1005,28 +1491,66 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
     //mHardware->setMicMute_nosync(false);
     mState = AUDIO_INPUT_OPENED;
 
-    if (!acoustic)
-        return NO_ERROR;
+    if (audpp_filter_inited)
+    {
+        audpre_index = calculate_audpre_table_index(mSampleRate);
+        int fd;
 
-    audpre_index = calculate_audpre_table_index(mSampleRate);
-    tx_iir_index = (audpre_index * 2) + (hw->checkOutputStandby() ? 0 : 1);
-    LOGD("audpre_index = %d, tx_iir_index = %d\n", audpre_index, tx_iir_index);
+        fd = open(PREPROC_CTL_DEVICE, O_RDWR);
+        if (fd < 0) {
+             LOGE("Cannot open PreProc Ctl device");
+             return -EPERM;
+        }
 
-    /**
-     * If audio-preprocessing failed, we should not block record.
-     */
-    int (*msm72xx_set_audpre_params)(int, int);
-    msm72xx_set_audpre_params = (int (*)(int, int))::dlsym(acoustic, "msm72xx_set_audpre_params");
-    status = msm72xx_set_audpre_params(audpre_index, tx_iir_index);
-    if (status < 0)
-        LOGE("Cannot set audpre parameters");
+         /* Setting AGC Params */
+        LOGI("AGC Filter Param1= %02x.", tx_agc_cfg[audpre_index].cmd_id);
+        LOGI("AGC Filter Param2= %02x.", tx_agc_cfg[audpre_index].tx_agc_param_mask);
+        LOGI("AGC Filter Param3= %02x.", tx_agc_cfg[audpre_index].tx_agc_enable_flag);
+        LOGI("AGC Filter Param4= %02x.", tx_agc_cfg[audpre_index].static_gain);
+        LOGI("AGC Filter Param5= %02x.", tx_agc_cfg[audpre_index].adaptive_gain_flag);
+        LOGI("AGC Filter Param6= %02x.", tx_agc_cfg[audpre_index].agc_params[0]);
+        LOGI("AGC Filter Param7= %02x.", tx_agc_cfg[audpre_index].agc_params[18]);
+        if (ioctl(fd, AUDIO_SET_AGC, &tx_agc_cfg[audpre_index]) < 0)
+        {
+            LOGE("set AGC filter error.");
+            return -EIO;
+        }
 
-    int (*msm72xx_enable_audpre)(int, int, int);
-    msm72xx_enable_audpre = (int (*)(int, int, int))::dlsym(acoustic, "msm72xx_enable_audpre");
-    mAcoustics = acoustic_flags;
-    status = msm72xx_enable_audpre((int)acoustic_flags, audpre_index, tx_iir_index);
-    if (status < 0)
-        LOGE("Cannot enable audpre");
+         /* Setting NS Params */
+        LOGI("NS Filter Param1= %02x.", ns_cfg[audpre_index].cmd_id);
+        LOGI("NS Filter Param2= %02x.", ns_cfg[audpre_index].ec_mode_new);
+        LOGI("NS Filter Param3= %02x.", ns_cfg[audpre_index].dens_gamma_n);
+        LOGI("NS Filter Param4= %02x.", ns_cfg[audpre_index].dens_nfe_block_size);
+        LOGI("NS Filter Param5= %02x.", ns_cfg[audpre_index].dens_limit_ns);
+        LOGI("NS Filter Param6= %02x.", ns_cfg[audpre_index].dens_limit_ns_d);
+        LOGI("NS Filter Param7= %02x.", ns_cfg[audpre_index].wb_gamma_e);
+        LOGI("NS Filter Param8= %02x.", ns_cfg[audpre_index].wb_gamma_n);
+        if (ioctl(fd, AUDIO_SET_NS, &ns_cfg[audpre_index]) < 0)
+        {
+            LOGE("set NS filter error.");
+            return -EIO;
+        }
+
+        /* Setting TX_IIR Params */
+        LOGI("TX_IIR Filter Param1= %02x.", tx_iir_cfg[audpre_index].cmd_id);
+        LOGI("TX_IIR Filter Param2= %02x.", tx_iir_cfg[audpre_index].active_flag);
+        LOGI("TX_IIR Filter Param3= %02x.", tx_iir_cfg[audpre_index].num_bands);
+        LOGI("TX_IIR Filter Param4= %02x.", tx_iir_cfg[audpre_index].iir_params[0]);
+        LOGI("TX_IIR Filter Param5= %02x.", tx_iir_cfg[audpre_index].iir_params[1]);
+        LOGI("TX_IIR Filter Param6 %02x.", tx_iir_cfg[audpre_index].iir_params[47]);
+        if (ioctl(fd, AUDIO_SET_TX_IIR, &tx_iir_cfg[audpre_index]) < 0)
+        {
+           LOGE("set TX IIR filter error.");
+           return -EIO;
+        }
+
+         /*Setting AUDPRE_ENABLE*/
+        if (ioctl(fd, AUDIO_ENABLE_AUDPRE, &enable_mask) < 0)
+        {
+           LOGE("set AUDPRE_ENABLE error.");
+           return -EIO;
+        }
+    }
 
     return NO_ERROR;
 
