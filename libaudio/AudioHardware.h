@@ -27,6 +27,7 @@
 
 extern "C" {
 #include <linux/msm_audio.h>
+#include <linux/msm_audio_voicememo.h>
 }
 
 namespace android {
@@ -126,20 +127,6 @@ struct mbadrc_filter {
     uint16_t ext_buf_lsw;
     struct adrc_config adrc_band[5];
     struct adrc_ext_buf  ext_buf;
-};
-
-struct msm_audio_config {
-    uint32_t buffer_size;
-    uint32_t buffer_count;
-    uint32_t channel_count;
-    uint32_t sample_rate;
-    uint32_t codec_type;
-    uint32_t unused[3];
-};
-
-struct msm_audio_stats {
-    uint32_t out_bytes;
-    uint32_t unused[3];
 };
 
 #define CODEC_TYPE_PCM 0

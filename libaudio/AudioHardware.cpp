@@ -80,6 +80,10 @@ static uint32_t SND_DEVICE_TTY_VCO=-1;
 static uint32_t SND_DEVICE_TTY_FULL=-1;
 static uint32_t SND_DEVICE_CARKIT=-1;
 static uint32_t SND_DEVICE_FM_SPEAKER=-1;
+#define PCM_OUT_DEVICE "/dev/msm_pcm_out"
+#define PCM_IN_DEVICE "/dev/msm_pcm_in"
+#define PCM_CTL_DEVICE "/dev/msm_pcm_ctl"
+#define VOICE_MEMO_DEVICE "/dev/msm_voicememo"
 static uint32_t SND_DEVICE_FM_HEADSET=-1;
 static uint32_t SND_DEVICE_NO_MIC_HEADSET=-1;
 // ----------------------------------------------------------------------------
@@ -883,8 +887,11 @@ static unsigned calculate_audpre_table_index(unsigned index)
 }
 size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int channelCount)
 {
-    if (format != AudioSystem::PCM_16_BIT) {
-        LOGW("getInputBufferSize bad format: %d", format);
+    if ( (format != AudioSystem::PCM_16_BIT) &&
+         (format != AudioSystem::AMR_NB)     &&
+         (format != AudioSystem::EVRC)       &&
+         (format != AudioSystem::QCELP)){
+        LOGW("getInputBufferSize bad format: 0x%x", format);
         return 0;
     }
     if (channelCount < 1 || channelCount > 2) {
@@ -892,7 +899,14 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
         return 0;
     }
 
-    return 2048*channelCount;
+    if(format == AudioSystem::AMR_NB)
+       return 1280*channelCount;
+    else if (format == AudioSystem::EVRC)
+       return 1150*channelCount;
+    else if (format == AudioSystem::QCELP)
+       return 1050*channelCount;
+    else
+       return 2048*channelCount;
 }
 
 static status_t set_volume_rpc(uint32_t device,
@@ -1262,7 +1276,7 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
         config.sample_rate = sampleRate();
         config.buffer_size = bufferSize();
         config.buffer_count = AUDIO_HW_NUM_OUT_BUF;
-        config.codec_type = CODEC_TYPE_PCM;
+        config.type = CODEC_TYPE_PCM;
         status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
         if (status < 0) {
             LOGE("Cannot set config");
@@ -1407,8 +1421,14 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         AudioSystem::audio_in_acoustics acoustic_flags)
 {
     int enable_mask = (TX_IIR_ENABLE | AGC_ENABLE | NS_ENABLE);
-    if (pFormat == 0 || *pFormat != AUDIO_HW_IN_FORMAT) {
+    if ((pFormat == 0) ||
+        ((*pFormat != AUDIO_HW_IN_FORMAT) &&
+         (*pFormat != AudioSystem::AMR_NB) &&
+         (*pFormat != AudioSystem::EVRC) &&
+         (*pFormat != AudioSystem::QCELP)))
+    {
         *pFormat = AUDIO_HW_IN_FORMAT;
+        LOGE("audio format bad value");
         return BAD_VALUE;
     }
     if (pRate == 0) {
@@ -1434,42 +1454,45 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         return -EPERM;
     }
 
-    // open audio input device
-    status_t status = ::open("/dev/msm_pcm_in", O_RDWR);
-    if (status < 0) {
-        LOGE("Cannot open /dev/msm_pcm_in errno: %d", errno);
-        goto Error;
-    }
-    mFd = status;
-
-    // configuration
-    LOGV("get config");
     struct msm_audio_config config;
-    status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot read config");
-        goto Error;
-    }
+    struct msm_audio_voicememo_config gcfg;
+    memset(&gcfg,0,sizeof(gcfg));
+    status_t status = 0;
+    if(*pFormat == AUDIO_HW_IN_FORMAT)
+    {
+    // open audio input device
+        status = ::open(PCM_IN_DEVICE, O_RDWR);
+        if (status < 0) {
+            LOGE("Cannot open %s errno: %d", PCM_IN_DEVICE, errno);
+            goto Error;
+        }
+        mFd = status;
 
-    LOGV("set config");
-    config.channel_count = AudioSystem::popCount(*pChannels);
-    config.sample_rate = *pRate;
-    config.buffer_size = bufferSize();
-    config.buffer_count = 2;
-    config.codec_type = CODEC_TYPE_PCM;
-    status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot set config");
-        if (ioctl(mFd, AUDIO_GET_CONFIG, &config) == 0) {
-            if (config.channel_count == 1) {
+        // configuration
+        status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
+        if (status < 0) {
+            LOGE("Cannot read config");
+           goto Error;
+        }
+
+        config.channel_count = AudioSystem::popCount(*pChannels);
+        config.sample_rate = *pRate;
+        config.buffer_size = bufferSize();
+        config.buffer_count = 2;
+        config.type = CODEC_TYPE_PCM;
+        status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
+        if (status < 0) {
+            LOGE("Cannot set config");
+           if (ioctl(mFd, AUDIO_GET_CONFIG, &config) == 0) {
+              if (config.channel_count == 1) {
                 *pChannels = AudioSystem::CHANNEL_IN_MONO;
             } else {
                 *pChannels = AudioSystem::CHANNEL_IN_STEREO;
             }
             *pRate = config.sample_rate;
+           }
+           goto Error;
         }
-        goto Error;
-    }
 
     LOGV("confirm config");
     status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
@@ -1487,6 +1510,117 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
     mChannels = *pChannels;
     mSampleRate = config.sample_rate;
     mBufferSize = config.buffer_size;
+    }
+    else if( (*pFormat == AudioSystem::AMR_NB) ||
+             (*pFormat == AudioSystem::EVRC) ||
+             (*pFormat == AudioSystem::QCELP))
+           {
+
+      // open vocie memo input device
+      status = ::open(VOICE_MEMO_DEVICE, O_RDWR);
+      if (status < 0) {
+          LOGE("Cannot open Voice Memo device for read");
+          goto Error;
+      }
+      mFd = status;
+      /* Config param */
+      if(ioctl(mFd, AUDIO_GET_CONFIG, &config))
+      {
+        LOGE(" Error getting buf config param AUDIO_GET_CONFIG \n");
+        goto  Error;
+      }
+
+      LOGE("The Config buffer size is %d", config.buffer_size);
+      LOGE("The Config buffer count is %d", config.buffer_count);
+      LOGE("The Config Channel count is %d", config.channel_count);
+      LOGE("The Config Sample rate is %d", config.sample_rate);
+
+      mDevices = devices;
+      mChannels = (config.channel_count > 1) ? AudioSystem::CHANNEL_IN_STEREO : AudioSystem::CHANNEL_IN_MONO;
+      mSampleRate = config.sample_rate;
+
+      if((mDevices == AudioSystem::DEVICE_IN_VOICE_CALL) &&
+         (mChannels == AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+         (mChannels != AudioSystem::CHANNEL_IN_VOICE_UPLINK))
+            gcfg.rec_type = RPC_VOC_REC_FORWARD;
+      else if ((mDevices == AudioSystem::DEVICE_IN_VOICE_CALL) &&
+               (mChannels != AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+               (mChannels == AudioSystem::CHANNEL_IN_VOICE_UPLINK))
+                  gcfg.rec_type = RPC_VOC_REC_REVERSE;
+      else if ((mDevices == AudioSystem::DEVICE_IN_VOICE_CALL) &&
+               (mChannels == (AudioSystem::CHANNEL_IN_VOICE_DNLINK || AudioSystem::CHANNEL_IN_VOICE_UPLINK)))
+                  gcfg.rec_type = RPC_VOC_REC_BOTH;
+      else if(mDevices == (AudioSystem::DEVICE_IN_BUILTIN_MIC))
+                  gcfg.rec_type = RPC_VOC_REC_REVERSE;
+
+      gcfg.rec_interval_ms = 0; // AV sync
+      gcfg.auto_stop_ms = 0;
+
+      switch (*pFormat)
+      {
+        case AudioSystem::AMR_NB:
+        {
+          gcfg.capability = RPC_VOC_CAP_AMR; // RPC_VOC_CAP_AMR (64)
+          gcfg.max_rate = RPC_VOC_AMR_RATE_1220; // Max rate (Fixed frame)
+          gcfg.min_rate = RPC_VOC_AMR_RATE_1220; // Min rate (Fixed frame length)
+          gcfg.frame_format = RPC_VOC_PB_AMR; // RPC_VOC_PB_AMR
+          mFormat = AudioSystem::AMR_NB;
+          mBufferSize = 1280;
+          break;
+        }
+
+        case AudioSystem::EVRC:
+        {
+          gcfg.capability = RPC_VOC_CAP_IS127;
+          gcfg.max_rate = RPC_VOC_1_RATE; // Max rate (Fixed frame)
+          gcfg.min_rate = RPC_VOC_1_RATE; // Min rate (Fixed frame length)
+          gcfg.frame_format = RPC_VOC_PB_NATIVE_QCP;
+          mFormat = AudioSystem::EVRC;
+          mBufferSize = 1150;
+          break;
+        }
+
+        case AudioSystem::QCELP:
+        {
+          gcfg.capability = RPC_VOC_CAP_IS733; // RPC_VOC_CAP_AMR (64)
+          gcfg.max_rate = RPC_VOC_1_RATE; // Max rate (Fixed frame)
+          gcfg.min_rate = RPC_VOC_1_RATE; // Min rate (Fixed frame length)
+          gcfg.frame_format = RPC_VOC_PB_NATIVE_QCP;
+          mFormat = AudioSystem::QCELP;
+          mBufferSize = 1050;
+          break;
+        }
+
+        default:
+        break;
+      }
+
+      gcfg.dtx_enable = 0;
+      gcfg.data_req_ms = 200;
+
+      /* Set Via  config param */
+      if (ioctl(mFd, AUDIO_SET_VOICEMEMO_CONFIG, &gcfg))
+      {
+        LOGE("Error: AUDIO_SET_VOICEMEMO_CONFIG failed\n");
+        goto  Error;
+      }
+
+      if (ioctl(mFd, AUDIO_GET_VOICEMEMO_CONFIG, &gcfg))
+      {
+        LOGE("Error: AUDIO_GET_VOICEMEMO_CONFIG failed\n");
+        goto  Error;
+      }
+
+      LOGE("After set rec_type = 0x%8x\n",gcfg.rec_type);
+      LOGE("After set rec_interval_ms = 0x%8x\n",gcfg.rec_interval_ms);
+      LOGE("After set auto_stop_ms = 0x%8x\n",gcfg.auto_stop_ms);
+      LOGE("After set capability = 0x%8x\n",gcfg.capability);
+      LOGE("After set max_rate = 0x%8x\n",gcfg.max_rate);
+      LOGE("After set min_rate = 0x%8x\n",gcfg.min_rate);
+      LOGE("After set frame_format = 0x%8x\n",gcfg.frame_format);
+      LOGE("After set dtx_enable = 0x%8x\n",gcfg.dtx_enable);
+      LOGE("After set data_req_ms = 0x%8x\n",gcfg.data_req_ms);
+    }
 
     //mHardware->setMicMute_nosync(false);
     mState = AUDIO_INPUT_OPENED;
@@ -1594,11 +1728,57 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
         mState = AUDIO_INPUT_STARTED;
     }
 
+    if (mFormat == AudioSystem::AMR_NB)
+    {
+      if (bytes < 320) // This is the minimum buffer size that needs to be passed to kernel driver.
+      {
+        LOGE("Error, the buffer size passed is not compatible %d", bytes);
+        return -1;
+      }
+    }
+    else if (mFormat == AudioSystem::EVRC)
+    {
+      if (bytes < 230)
+      {
+        LOGE("Error, the buffer size passed is not compatible %d", bytes);
+        return -1;
+      }
+    }
+    else if (mFormat == AudioSystem::QCELP)
+    {
+      if (bytes < 350)
+      {
+        LOGE("Error, the buffer size passed is not compatible %d", bytes);
+        return -1;
+      }
+    }
+
+    // Resetting the bytes value, to return the appropriate read value
+    bytes = 0;
     while (count) {
-        ssize_t bytesRead = ::read(mFd, buffer, count);
+        ssize_t bytesRead = ::read(mFd, p, count);
         if (bytesRead >= 0) {
+            LOGV("Number of Bytes read = %d", bytesRead);
             count -= bytesRead;
             p += bytesRead;
+            bytes += bytesRead;
+            LOGV("Total Number of Bytes read = %d", bytes);
+            // Ensure that the minimum buffer that can be sent is checked for 320 bytes
+            if ((mFormat == AudioSystem::AMR_NB) && (count < 320))
+            {
+               LOGI("The buffer passed to driver for read %d, is less than the min 320 bytes, breaking loop", count);
+               break;
+            }
+            else if ((mFormat == AudioSystem::EVRC) && (count < 230))
+            {
+               LOGI("The buffer passed to driver for read %d, is less than the min 230 bytes, breaking loop", count);
+               break;
+            }
+            else if ((mFormat == AudioSystem::QCELP) && (count < 350))
+            {
+                LOGI("The buffer passed to driver for read %d, is less than the min 350 bytes, breaking loop", count);
+                break;
+             }
         } else {
             if (errno != EAGAIN) return bytesRead;
             mRetryCount++;
