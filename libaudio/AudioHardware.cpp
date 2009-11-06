@@ -1054,8 +1054,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
     uint8_t* p = static_cast<uint8_t*>(buffer);
 
     if (mState < AUDIO_INPUT_OPENED) {
-        Mutex::Autolock lock(mHardware->mLock);
-        if (set(mHardware, mDevices, &mFormat, &mChannels, &mSampleRate, mAcoustics) != NO_ERROR) {
+        AudioHardware *hw = mHardware;
+        hw->mLock.lock();
+        status_t status = set(hw, mDevices, &mFormat, &mChannels, &mSampleRate, mAcoustics);
+        hw->mLock.unlock();
+        if (status != NO_ERROR) {
             return -1;
         }
     }
