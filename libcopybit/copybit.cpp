@@ -118,7 +118,7 @@ static void intersect(struct copybit_rect_t *out,
 static int get_format(int format) {
     switch (format) {
     case COPYBIT_FORMAT_RGB_565:       return MDP_RGB_565;
-    case COPYBIT_FORMAT_RGBX_8888:     return MDP_RGBX_8888;
+    case COPYBIT_FORMAT_RGBX_8888:     return MDP_XRGB_8888;
     case COPYBIT_FORMAT_RGB_888:       return MDP_RGB_888;
     case COPYBIT_FORMAT_RGBA_8888:     return MDP_RGBA_8888;
     case COPYBIT_FORMAT_BGRA_8888:     return MDP_BGRA_8888;
@@ -194,7 +194,7 @@ static void set_rects(struct copybit_context_t *dev,
 static void set_infos(struct copybit_context_t *dev, struct mdp_blit_req *req) {
     req->alpha = dev->mAlpha;
     req->transp_mask = MDP_TRANSP_NOP;
-    req->flags = dev->mFlags | MDP_BLEND_FG_PREMULT;
+    req->flags = dev->mFlags;
 }
 
 /** copy the bits */
