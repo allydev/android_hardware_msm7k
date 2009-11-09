@@ -194,13 +194,7 @@ static int init_pmem_area_locked(private_module_t* m)
     if (master_fd >= 0) {
         
         size_t size;
-        pmem_region region;
-        if (ioctl(master_fd, PMEM_GET_TOTAL_SIZE, &region) < 0) {
-            LOGE("PMEM_GET_TOTAL_SIZE failed, limp mode");
-            size = 8<<20;   // 8 MiB
-        } else {
-            size = region.len;
-        }
+        size = 16<<20;   // 16 MiB
         sAllocator.setSize(size);
 
         void* base = mmap(0, size, 
@@ -343,11 +337,9 @@ try_ashmem:
                 err = -ENOMEM;
             } else {
                 struct pmem_region sub = { offset, size };
-                
                 // now create the "sub-heap"
                 fd = open("/dev/pmem", O_RDWR, 0);
                 err = fd < 0 ? fd : 0;
-                
                 // and connect to it
                 if (err == 0)
                     err = ioctl(fd, PMEM_CONNECT, m->pmem_master);
@@ -393,9 +385,27 @@ try_ashmem:
                 // no more pmem memory
                 err = -ENOMEM;
             } else {
-                LOGD("allocating GPU size=%d, offset=%d", size, offset);
-                fd = open("/dev/null", O_RDONLY); // just so marshalling doesn't fail
-                gpu_fd = m->gpu;
+                struct pmem_region sub = { offset, size };
+
+                // now create the "sub-heap"
+                fd = open("/dev/pmem_gpu1", O_RDWR, 0);
+                err = fd < 0 ? fd : 0;
+
+		// and connect to it
+                if (err == 0)
+                    err = ioctl(fd, PMEM_CONNECT, m->gpu);
+
+                // and make it available to the client process
+                if (err == 0)
+                    err = ioctl(fd, PMEM_MAP, &sub);
+
+                if (err < 0) {
+                    LOGE("%s alloc from pmem mmap failed", __func__);
+                    err = -errno;
+                    close(fd);
+                    sAllocatorGPU.deallocate(offset);
+                    fd = -1;
+                }
                 memset((char*)base + offset, 0, size);
             }
         } else {
