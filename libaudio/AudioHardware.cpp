@@ -67,7 +67,7 @@ AudioHardware::AudioHardware() :
     mInit(false), mMicMute(true), mBluetoothNrec(true), mBluetoothId(0),
     mOutput(0), mSndEndpoints(NULL), mCurSndDevice(-1)
 {
-    int m7xsnddriverfd = open("/dev/msm_snd", O_RDWR);
+    m7xsnddriverfd = open("/dev/msm_snd", O_RDWR);
     if (m7xsnddriverfd >= 0) {
         int rc = ioctl(m7xsnddriverfd, SND_GET_NUM_ENDPOINTS, &mNumSndEndpoints);
         if (rc >= 0) {
@@ -96,7 +96,6 @@ AudioHardware::AudioHardware() :
             }
         }
         else LOGE("Could not retrieve number of MSM SND endpoints.");
-		close(m7xsnddriverfd);
 	}
 	else LOGE("Could not open MSM SND driver.");
 #if 0
@@ -184,6 +183,13 @@ AudioHardware::~AudioHardware()
         ::dlclose(acoustic);
         acoustic = 0;
     }
+
+    if (m7xsnddriverfd > 0)
+    {
+      close(m7xsnddriverfd);
+      m7xsnddriverfd = -1;
+    }
+
     mInit = false;
 }
 
@@ -397,17 +403,16 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
 
 static status_t set_volume_rpc(uint32_t device,
                                uint32_t method,
-                               uint32_t volume)
+                               uint32_t volume,
+                               int m7xsnddriverfd)
 {
-    int fd;
 #if LOG_SND_RPC
     LOGD("rpc_snd_set_volume(%d, %d, %d)\n", device, method, volume);
 #endif
 
     if (device == -1UL) return NO_ERROR;
 
-    fd = open("/dev/msm_snd", O_RDWR);
-    if (fd < 0) {
+    if (m7xsnddriverfd < 0) {
         LOGE("Can not open snd device");
         return -EPERM;
     }
@@ -425,12 +430,10 @@ static status_t set_volume_rpc(uint32_t device,
      args.method = method;
      args.volume = volume;
 
-     if (ioctl(fd, SND_SET_VOLUME, &args) < 0) {
+     if (ioctl(m7xsnddriverfd, SND_SET_VOLUME, &args) < 0) {
          LOGE("snd_set_volume error.");
-         close(fd);
          return -EIO;
      }
-     close(fd);
      return NO_ERROR;
 }
 
@@ -444,26 +447,26 @@ status_t AudioHardware::setVoiceVolume(float v)
         v = 1.0;
     }
 
-    int vol = lrint(v * 5.0);
+    int vol = lrint(v * 7.0);
     LOGD("setVoiceVolume(%f)\n", v);
     LOGI("Setting in-call volume to %d (available range is 0 to 5)\n", vol);
 
     Mutex::Autolock lock(mLock);
-    set_volume_rpc(SND_DEVICE_CURRENT, SND_METHOD_VOICE, vol);
+    set_volume_rpc(SND_DEVICE_CURRENT, SND_METHOD_VOICE, vol, m7xsnddriverfd);
     return NO_ERROR;
 }
 
 status_t AudioHardware::setMasterVolume(float v)
 {
     Mutex::Autolock lock(mLock);
-    int vol = ceil(v * 5.0);
+    int vol = ceil(v * 7.0);
     LOGI("Set master volume to %d.\n", vol);
-    /*
-    set_volume_rpc(SND_DEVICE_HANDSET, SND_METHOD_VOICE, vol);
-    set_volume_rpc(SND_DEVICE_SPEAKER, SND_METHOD_VOICE, vol);
-    set_volume_rpc(SND_DEVICE_BT,      SND_METHOD_VOICE, vol);
-    set_volume_rpc(SND_DEVICE_HEADSET, SND_METHOD_VOICE, vol);
-    */
+
+    set_volume_rpc(SND_DEVICE_HANDSET, SND_METHOD_VOICE, vol, m7xsnddriverfd);
+    set_volume_rpc(SND_DEVICE_SPEAKER, SND_METHOD_VOICE, vol, m7xsnddriverfd);
+    set_volume_rpc(SND_DEVICE_BT,      SND_METHOD_VOICE, vol, m7xsnddriverfd);
+    set_volume_rpc(SND_DEVICE_HEADSET, SND_METHOD_VOICE, vol, m7xsnddriverfd);
+
     // We return an error code here to let the audioflinger do in-software
     // volume on top of the maximum volume that we set through the SND API.
     // return error - software mixer will handle it
@@ -471,18 +474,16 @@ status_t AudioHardware::setMasterVolume(float v)
 }
 
 static status_t do_route_audio_rpc(uint32_t device,
-                                   bool ear_mute, bool mic_mute)
+                                   bool ear_mute, bool mic_mute, int m7xsnddriverfd)
 {
     if (device == -1UL)
         return NO_ERROR;
 
-    int fd;
 #if LOG_SND_RPC
     LOGD("rpc_snd_set_device(%d, %d, %d)\n", device, ear_mute, mic_mute);
 #endif
 
-    fd = open("/dev/msm_snd", O_RDWR);
-    if (fd < 0) {
+    if (m7xsnddriverfd < 0) {
         LOGE("Can not open snd device");
         return -EPERM;
     }
@@ -501,13 +502,11 @@ static status_t do_route_audio_rpc(uint32_t device,
     args.ear_mute = ear_mute ? SND_MUTE_MUTED : SND_MUTE_UNMUTED;
     args.mic_mute = mic_mute ? SND_MUTE_MUTED : SND_MUTE_UNMUTED;
 
-    if (ioctl(fd, SND_SET_DEVICE, &args) < 0) {
+    if (ioctl(m7xsnddriverfd, SND_SET_DEVICE, &args) < 0) {
         LOGE("snd_set_device error.");
-        close(fd);
         return -EIO;
     }
 
-    close(fd);
     return NO_ERROR;
 }
 
@@ -523,7 +522,7 @@ status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
     }
     LOGV("doAudioRouteOrMute() device %x, mMode %d, mMicMute %d", device, mMode, mMicMute);
     return do_route_audio_rpc(device,
-                              mMode != AudioSystem::MODE_IN_CALL, mMicMute);
+                              mMode != AudioSystem::MODE_IN_CALL, mMicMute, m7xsnddriverfd);
 }
 
 status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)

@@ -239,6 +239,7 @@ private:
             msm_snd_endpoint *mSndEndpoints;
             int mNumSndEndpoints;
             int mCurSndDevice;
+            int m7xsnddriverfd;
 
      friend class AudioStreamInMSM72xx;
             Mutex       mLock;
