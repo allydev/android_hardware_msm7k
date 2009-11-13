@@ -17,6 +17,7 @@ LOCAL_PATH:= $(call my-dir)
 # HAL module implemenation, not prelinked and stored in
 # hw/<COPYPIX_HARDWARE_MODULE_ID>.<ro.board.platform>.so
 
+ifeq (, $(filter msm7630_surf, $(TARGET_PRODUCT)))
 ifeq ($(TARGET_BOARD_PLATFORM),msm7k)
 include $(CLEAR_VARS)
 LOCAL_PRELINK_MODULE := false
@@ -39,4 +40,5 @@ LOCAL_MODULE := copybit.qsd8k
 LOCAL_C_INCLUDES += hardware/libhardware/modules/gralloc
 LOCAL_CFLAGS += -DCOPYBIT_QSD8K=1
 include $(BUILD_SHARED_LIBRARY)
+endif
 endif
