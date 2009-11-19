@@ -114,6 +114,7 @@ struct private_module_t HAL_MODULE_INFO_SYM = {
     currentBuffer: 0,
     pmem_master: -1,
     pmem_master_base: 0,
+    pmem_master_phys: 0,
     master_phys: 0,
     gpu: -1,
     gpu_base: 0
@@ -170,6 +171,7 @@ static int gralloc_alloc_framebuffer_locked(alloc_device_t* dev,
     
     hnd->base = vaddr;
     hnd->offset = vaddr - intptr_t(m->framebuffer->base);
+    hnd->phys = intptr_t(m->framebuffer->phys) + hnd->offset;
     *pHandle = hnd;
 
     return 0;
@@ -204,6 +206,14 @@ static int init_pmem_area_locked(private_module_t* m)
             base = 0;
             close(master_fd);
             master_fd = -1;
+        } else {
+            pmem_region region;
+            err = ioctl(master_fd, PMEM_GET_PHYS, &region);
+            if(err < 0) {
+                LOGE("init pmem: master ioctl failed %d", -errno);
+            } else {
+                m->pmem_master_phys = (unsigned long)region.offset;
+            }
         }
         m->pmem_master = master_fd;
         m->pmem_master_base = base;
@@ -426,6 +436,10 @@ try_ashmem:
             private_module_t* m = reinterpret_cast<private_module_t*>(
                     dev->common.module);
             hnd->phys = m->master_phys + offset;
+        } else if (flags & private_handle_t::PRIV_FLAGS_USES_PMEM) {
+            private_module_t* m = reinterpret_cast<private_module_t*>(
+                    dev->common.module);
+            hnd->phys = m->pmem_master_phys + offset;
         }
         *pHandle = hnd;
     }
