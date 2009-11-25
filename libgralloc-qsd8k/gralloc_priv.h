@@ -45,6 +45,7 @@ struct private_module_t {
     buffer_handle_t currentBuffer;
     int pmem_master;
     void* pmem_master_base;
+    unsigned long pmem_master_phys;
     unsigned long master_phys;
     int gpu;
     void* gpu_base;
