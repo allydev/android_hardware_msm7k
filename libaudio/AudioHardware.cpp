@@ -37,6 +37,7 @@
 #define LOG_SND_RPC 0  // Set to 1 to log sound RPC's
 
 #define DUALMIC_KEY "dualmic_enabled"
+#define TTY_MODE_KEY "tty_mode"
 
 namespace android {
 static int audpre_index, tx_iir_index;
@@ -292,7 +293,6 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
     const char BT_NAME_KEY[] = "bt_headset_name";
     const char BT_NREC_VALUE_ON[] = "on";
 
-
     LOGV("setParameters() %s", keyValuePairs.string());
 
     if (keyValuePairs.length() == 0) return BAD_VALUE;
@@ -323,6 +323,7 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
             doRouting(NULL);
         }
     }
+
     key = String8(DUALMIC_KEY);
     if (param.get(key, value) == NO_ERROR) {
         if (value == "true") {
@@ -334,6 +335,21 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
         }
         doRouting(NULL);
     }
+
+    key = String8(TTY_MODE_KEY);
+    if (param.get(key, value) == NO_ERROR) {
+        if (value == "full") {
+            mTtyMode = TTY_FULL;
+        } else if (value == "hco") {
+            mTtyMode = TTY_HCO;
+        } else if (value == "vco") {
+            mTtyMode = TTY_VCO;
+        } else {
+            mTtyMode = TTY_OFF;
+        }
+        doRouting(NULL);
+    }
+
     return NO_ERROR;
 }
 
@@ -983,6 +999,12 @@ status_t AudioHardware::setVoiceVolume(float v)
     LOGD("setVoiceVolume(%f)\n", v);
     LOGI("Setting in-call volume to %d (available range is 0 to 7)\n", vol);
 
+    if (mCurSndDevice == SND_DEVICE_TTY_FULL || mCurSndDevice == SND_DEVICE_TTY_VCO)
+    {
+        vol = 1;
+        LOGI("For TTY device in FULL or VCO mode, the volume level is set to: %d \n", vol);
+    }
+
     Mutex::Autolock lock(mLock);
     set_volume_rpc(SND_DEVICE_CURRENT, SND_METHOD_VOICE, vol, m7xsnddriverfd);
     return NO_ERROR;
@@ -1109,9 +1131,18 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
             }
         }
 
-        if (outputDevices & AudioSystem::DEVICE_OUT_TTY) {
-                LOGI("Routing audio to TTY\n");
+        if ((mTtyMode != TTY_OFF) && (mMode == AudioSystem::MODE_IN_CALL) &&
+                (outputDevices & (AudioSystem::DEVICE_OUT_TTY | AudioSystem::DEVICE_OUT_WIRED_HEADSET))) {
+            if (mTtyMode == TTY_FULL) {
+                LOGI("Routing audio to TTY FULL Mode\n");
                 sndDevice = SND_DEVICE_TTY_FULL;
+            } else if (mTtyMode == TTY_VCO) {
+                LOGI("Routing audio to TTY VCO Mode\n");
+                sndDevice = SND_DEVICE_TTY_VCO;
+            } else if (mTtyMode == TTY_HCO) {
+                LOGI("Routing audio to TTY HCO Mode\n");
+                sndDevice = SND_DEVICE_TTY_HCO;
+            }
         } else if (outputDevices &
                    (AudioSystem::DEVICE_OUT_BLUETOOTH_SCO | AudioSystem::DEVICE_OUT_BLUETOOTH_SCO_HEADSET)) {
             LOGI("Routing audio to Bluetooth PCM\n");
@@ -1174,6 +1205,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
     if (sndDevice != -1 && sndDevice != mCurSndDevice) {
         ret = doAudioRouteOrMute(sndDevice);
         msm72xx_enable_audpp(audProcess,sndDevice);
+        mCurSndDevice = sndDevice;
     }
 
     return ret;

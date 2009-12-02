@@ -129,6 +129,13 @@ struct mbadrc_filter {
     struct adrc_ext_buf  ext_buf;
 };
 
+enum tty_modes {
+    TTY_OFF = 0,
+    TTY_VCO = 1,
+    TTY_HCO = 2,
+    TTY_FULL = 3
+};
+
 #define CODEC_TYPE_PCM 0
 #define AUDIO_HW_NUM_OUT_BUF 2  // Number of buffers in audio driver for output
 // TODO: determine actual audio DSP and hardware latency
@@ -285,6 +292,7 @@ private:
             int mCurSndDevice;
             int m7xsnddriverfd;
             bool        mDualMicEnabled;
+            int         mTtyMode;
 
      friend class AudioStreamInMSM72xx;
             Mutex       mLock;
