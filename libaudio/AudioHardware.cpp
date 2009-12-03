@@ -930,7 +930,8 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
     if ( (format != AudioSystem::PCM_16_BIT) &&
          (format != AudioSystem::AMR_NB)     &&
          (format != AudioSystem::EVRC)       &&
-         (format != AudioSystem::QCELP)){
+         (format != AudioSystem::QCELP)      &&
+         (format != AudioSystem::AAC)){
         LOGW("getInputBufferSize bad format: 0x%x", format);
         return 0;
     }
@@ -945,6 +946,8 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
        return 1150*channelCount;
     else if (format == AudioSystem::QCELP)
        return 1050*channelCount;
+    else if (format == AudioSystem::AAC)
+       return 2048;
     else
        return 2048*channelCount;
 }
@@ -1492,7 +1495,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         ((*pFormat != AUDIO_HW_IN_FORMAT) &&
          (*pFormat != AudioSystem::AMR_NB) &&
          (*pFormat != AudioSystem::EVRC) &&
-         (*pFormat != AudioSystem::QCELP)))
+         (*pFormat != AudioSystem::QCELP) &&
+         (*pFormat != AudioSystem::AAC)))
     {
         *pFormat = AUDIO_HW_IN_FORMAT;
         LOGE("audio format bad value");
@@ -1688,6 +1692,42 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
       LOGE("After set dtx_enable = 0x%8x\n",gcfg.dtx_enable);
       LOGE("After set data_req_ms = 0x%8x\n",gcfg.data_req_ms);
     }
+    else if(*pFormat == AudioSystem::AAC) {
+      // open AAC input device
+               status = ::open(PCM_IN_DEVICE, O_RDWR);
+               if (status < 0) {
+                     LOGE("Cannot open AAC input  device for read");
+                     goto Error;
+               }
+               mFd = status;
+
+      /* Config param */
+               if(ioctl(mFd, AUDIO_GET_CONFIG, &config))
+               {
+                     LOGE(" Error getting buf config param AUDIO_GET_CONFIG \n");
+                     goto  Error;
+               }
+
+      LOGV("The Config buffer size is %d", config.buffer_size);
+      LOGV("The Config buffer count is %d", config.buffer_count);
+      LOGV("The Config Channel count is %d", config.channel_count);
+      LOGV("The Config Sample rate is %d", config.sample_rate);
+
+      mDevices = devices;
+      mChannels = *pChannels;
+      mSampleRate = *pRate;
+      mBufferSize = 2048;
+      mFormat = *pFormat;
+
+      config.channel_count = AudioSystem::popCount(*pChannels);
+      config.sample_rate = *pRate;
+      config.type = 1; // Configuring PCM_IN_DEVICE to AAC format
+
+      if (ioctl(mFd, AUDIO_SET_CONFIG, &config)) {
+             LOGE(" Error in setting config of msm_pcm_in device \n");
+                   goto Error;
+        }
+    }
 
     //mHardware->setMicMute_nosync(false);
     mState = AUDIO_INPUT_OPENED;
@@ -1775,7 +1815,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
     if (!mHardware) return -1;
 
     size_t count = bytes;
+    size_t  aac_framesize= bytes;
     uint8_t* p = static_cast<uint8_t*>(buffer);
+    uint32_t* recogPtr = (uint32_t *)p;
+    uint16_t* frameCountPtr;
+    uint16_t* frameSizePtr;
 
     if (mState < AUDIO_INPUT_OPENED) {
         AudioHardware *hw = mHardware;
@@ -1819,17 +1863,48 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
         return -1;
       }
     }
+    else if (mFormat == AudioSystem::AAC)
+    {
+      if (bytes < 2048)
+      {
+        LOGE("Error, the buffer size passed is not compatible %d", bytes);
+        return -1;
+      }
+    }
 
     // Resetting the bytes value, to return the appropriate read value
     bytes = 0;
-    while (count) {
+    if (mFormat == AudioSystem::AAC)
+    {
+        *((uint32_t*)recogPtr) = 0x51434F4D ;// ('Q','C','O', 'M') Number to identify format as AAC by higher layers
+        recogPtr++;
+        frameCountPtr = (uint16_t*)recogPtr;
+        *frameCountPtr = 0;
+        p += 3*sizeof(uint16_t);
+        count -= 3*sizeof(uint16_t);
+    }
+    while (count > 0) {
+
+        if (mFormat == AudioSystem::AAC) {
+            frameSizePtr = (uint16_t *)p;
+            p += sizeof(uint16_t);
+            if(!(count > 2)) break;
+            count -= sizeof(uint16_t);
+        }
+
         ssize_t bytesRead = ::read(mFd, p, count);
-        if (bytesRead >= 0) {
+        if (bytesRead > 0) {
             LOGV("Number of Bytes read = %d", bytesRead);
             count -= bytesRead;
             p += bytesRead;
             bytes += bytesRead;
             LOGV("Total Number of Bytes read = %d", bytes);
+
+            if (mFormat == AudioSystem::AAC){
+                *frameSizePtr =  bytesRead;
+                (*frameCountPtr)++;
+            }
+
             // Ensure that the minimum buffer that can be sent is checked for 320 bytes
             if ((mFormat == AudioSystem::AMR_NB) && (count < 320))
             {
@@ -1846,12 +1921,20 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                 LOGI("The buffer passed to driver for read %d, is less than the min 350 bytes, breaking loop", count);
                 break;
              }
+        }
+        else if(bytesRead == 0)
+        {
+         LOGI("Bytes Read = %d ,Buffer no longer sufficient",bytesRead);
+         break;
         } else {
             if (errno != EAGAIN) return bytesRead;
             mRetryCount++;
             LOGW("EAGAIN - retrying");
         }
     }
+    if (mFormat == AudioSystem::AAC)
+         return aac_framesize;
+
     return bytes;
 }
 
