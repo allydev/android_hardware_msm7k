@@ -67,6 +67,7 @@ char* name[20][44];
 int dev_cnt = 0;
 int mixer_cnt = 0;
 unsigned short dec_id = 65535;
+unsigned short in_dec_id = 65535;
 bool VoiceDeviceIsEnabled = false;
 typedef struct routing_table
 {
@@ -1047,6 +1048,19 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
             return -1;
         }
     }
+    if(ioctl(mFd, AUDIO_GET_SESSION_ID, &in_dec_id)) {
+        LOGE("AUDIO_GET_SESSION_ID failed*********");
+        return 0;
+    }
+    LOGV("in_dec_id = %d\n",in_dec_id);
+    if(msm_en_device(device_list[1].dev_id, 1)) {
+        LOGE("msm_en_device failed");
+        return 0;
+    }
+    if(msm_route_stream(2, in_dec_id, device_list[1].dev_id, 1)) {
+        LOGE("msm_route_stream failed");
+        return 0;
+    }
 
     if (mState < AUDIO_INPUT_STARTED) {
         if (ioctl(mFd, AUDIO_START, 0)) {
@@ -1080,6 +1094,21 @@ status_t AudioHardware::AudioStreamInMSM72xx::standby()
         }
         //mHardware->checkMicMute();
         mState = AUDIO_INPUT_CLOSED;
+    }
+
+    LOGV("Deroute pcm stream");
+    if(msm_route_stream(2, in_dec_id, device_list[1].dev_id, 0)) {
+        LOGE("could not set stream routing\n");
+        return -1;
+    }
+    // Disable the Eapiece device, if there is nothing to render.
+    if(in_dec_id != 65535) {
+        LOGV("Disable device");
+        if(msm_en_device(device_list[1].dev_id, 0)) {
+            LOGE("could not enable device\n");
+            return -1;
+        }
+        in_dec_id = 65535;
     }
     return NO_ERROR;
 }
