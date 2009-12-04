@@ -37,6 +37,14 @@
 
 #define LOG_SND_RPC 0  // Set to 1 to log sound RPC's
 
+#define AMRNB_DEVICE_IN "/dev/msm_amrnb_in"
+#define EVRC_DEVICE_IN "/dev/msm_evrc_in"
+#define QCELP_DEVICE_IN "/dev/msm_qcelp_in"
+#define AAC_DEVICE_IN "/dev/msm_aac_in"
+#define AMRNB_FRAME_SIZE 32
+#define EVRC_FRAME_SIZE 23
+#define QCELP_FRAME_SIZE 35
+
 namespace android {
 static int audpre_index, tx_iir_index;
 static void * acoustic;
@@ -85,7 +93,7 @@ typedef struct device_table
     int capability;
 }Device_table;
 Device_table device_list[20];
-
+static void amr_transcode(unsigned char *src, unsigned char *dst);
 bool fmState = false;
 //
 // ----------------------------------------------------------------------------
@@ -352,7 +360,11 @@ static unsigned calculate_audpre_table_index(unsigned index)
 }
 size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int channelCount)
 {
-    if (format != AudioSystem::PCM_16_BIT) {
+    if ((format != AudioSystem::PCM_16_BIT) &&
+        (format != AudioSystem::AMR_NB)      &&
+        (format != AudioSystem::EVRC)      &&
+        (format != AudioSystem::QCELP)  &&
+        (format != AudioSystem::AAC)){
         LOGW("getInputBufferSize bad format: %d", format);
         return 0;
     }
@@ -361,7 +373,16 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
         return 0;
     }
 
-    return 2048*channelCount;
+    if (format == AudioSystem::AMR_NB)
+       return 1280*channelCount;
+    if (format == AudioSystem::EVRC)
+       return 1150*channelCount;
+    else if (format == AudioSystem::QCELP)
+       return 1050*channelCount;
+    else if (format == AudioSystem::AAC)
+       return 2048;
+    else
+       return 2048*channelCount;
 }
 
 static status_t set_volume_rpc(uint32_t device,
@@ -908,7 +929,13 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         AudioHardware* hw, uint32_t devices, int *pFormat, uint32_t *pChannels, uint32_t *pRate,
         AudioSystem::audio_in_acoustics acoustic_flags)
 {
-    if (pFormat == 0 || *pFormat != AUDIO_HW_IN_FORMAT) {
+    if ((pFormat == 0) ||
+        ((*pFormat != AUDIO_HW_IN_FORMAT) &&
+         (*pFormat != AudioSystem::AMR_NB) &&
+         (*pFormat != AudioSystem::EVRC) &&
+         (*pFormat != AudioSystem::QCELP) &&
+         (*pFormat != AudioSystem::AAC)))
+    {
         *pFormat = AUDIO_HW_IN_FORMAT;
         return BAD_VALUE;
     }
@@ -934,61 +961,251 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         LOGE("Audio record already open");
         return -EPERM;
     }
-
-    // open audio input device
-    status_t status = ::open("/dev/msm_pcm_in", O_RDWR);
-    if (status < 0) {
-        LOGE("Cannot open /dev/msm_pcm_in errno: %d", errno);
-        goto Error;
-    }
-    mFd = status;
-
-    // configuration
-    LOGV("get config");
-    struct msm_audio_config config;
-    status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot read config");
-        goto Error;
-    }
-
-    LOGV("set config");
-    config.channel_count = AudioSystem::popCount(*pChannels);
-    config.sample_rate = *pRate;
-    config.buffer_size = bufferSize();
-    config.buffer_count = 2;
-    config.codec_type = CODEC_TYPE_PCM;
-    status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot set config");
-        if (ioctl(mFd, AUDIO_GET_CONFIG, &config) == 0) {
-            if (config.channel_count == 1) {
-                *pChannels = AudioSystem::CHANNEL_IN_MONO;
-            } else {
-                *pChannels = AudioSystem::CHANNEL_IN_STEREO;
-            }
-            *pRate = config.sample_rate;
+    status_t status =0;
+    if(*pFormat == AUDIO_HW_IN_FORMAT)
+    {
+        // open audio input device
+        status = ::open("/dev/msm_pcm_in", O_RDWR);
+        if (status < 0) {
+            LOGE("Cannot open /dev/msm_pcm_in errno: %d", errno);
+            goto Error;
         }
-        goto Error;
+        mFd = status;
+
+        // configuration
+        LOGV("get config");
+        struct msm_audio_config config;
+        status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
+        if (status < 0) {
+            LOGE("Cannot read config");
+            goto Error;
+        }
+
+        LOGV("set config");
+        config.channel_count = AudioSystem::popCount(*pChannels);
+        config.sample_rate = *pRate;
+        config.buffer_size = bufferSize();
+        config.buffer_count = 2;
+        config.codec_type = CODEC_TYPE_PCM;
+        status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
+        if (status < 0) {
+            LOGE("Cannot set config");
+            if (ioctl(mFd, AUDIO_GET_CONFIG, &config) == 0) {
+                if (config.channel_count == 1) {
+                    *pChannels = AudioSystem::CHANNEL_IN_MONO;
+                } else {
+                    *pChannels = AudioSystem::CHANNEL_IN_STEREO;
+                }
+                *pRate = config.sample_rate;
+            }
+            goto Error;
+        }
+
+        LOGV("confirm config");
+        status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
+        if (status < 0) {
+            LOGE("Cannot read config");
+            goto Error;
+        }
+        LOGV("buffer_size: %u", config.buffer_size);
+        LOGV("buffer_count: %u", config.buffer_count);
+        LOGV("channel_count: %u", config.channel_count);
+        LOGV("sample_rate: %u", config.sample_rate);
+
+        mDevices = devices;
+        mFormat = AUDIO_HW_IN_FORMAT;
+        mChannels = *pChannels;
+        mSampleRate = config.sample_rate;
+        mBufferSize = config.buffer_size;
     }
+    else if (*pFormat == AudioSystem::EVRC)
+    {
+        // open evrc input device
+          status = ::open(EVRC_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open evrc device for read");
+              goto Error;
+          }
+          mFd = status;
 
-    LOGV("confirm config");
-    status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot read config");
-        goto Error;
+          /* Config param */
+          struct msm_audio_stream_config config;
+          if(ioctl(mFd, AUDIO_GET_STREAM_CONFIG, &config))
+          {
+            LOGE(" Error getting buf config param AUDIO_GET_STREAM_CONFIG \n");
+            goto  Error;
+          }
+
+          LOGE("The Config buffer size is %d", config.buffer_size);
+          LOGE("The Config buffer count is %d", config.buffer_count);
+
+          mDevices = devices;
+          mChannels = AudioSystem::CHANNEL_IN_MONO;
+          mSampleRate =8000;
+          mFormat = *pFormat;
+          mBufferSize = 1150;
+          struct msm_audio_evrc_enc_config evrc_enc_cfg;
+
+          if (ioctl(mFd, AUDIO_GET_EVRC_ENC_CONFIG, &evrc_enc_cfg))
+          {
+            LOGE("Error: AUDIO_GET_EVRC_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config cdma_rate is %d", evrc_enc_cfg.cdma_rate);
+          LOGV("The Config min_bit_rate is %d", evrc_enc_cfg.min_bit_rate);
+          LOGV("The Config max_bit_rate is %d", evrc_enc_cfg.max_bit_rate);
+
+          evrc_enc_cfg.min_bit_rate = 4;
+          evrc_enc_cfg.max_bit_rate = 4;
+
+          if (ioctl(mFd, AUDIO_SET_EVRC_ENC_CONFIG, &evrc_enc_cfg))
+          {
+            LOGE("Error: AUDIO_SET_EVRC_ENC_CONFIG failed\n");
+            goto  Error;
+          }
     }
-    LOGV("buffer_size: %u", config.buffer_size);
-    LOGV("buffer_count: %u", config.buffer_count);
-    LOGV("channel_count: %u", config.channel_count);
-    LOGV("sample_rate: %u", config.sample_rate);
+    else if (*pFormat == AudioSystem::QCELP)
+    {
+        // open qcelp input device
+          status = ::open(QCELP_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open qcelp device for read");
+              goto Error;
+          }
+          mFd = status;
 
-    mDevices = devices;
-    mFormat = AUDIO_HW_IN_FORMAT;
-    mChannels = *pChannels;
-    mSampleRate = config.sample_rate;
-    mBufferSize = config.buffer_size;
+          /* Config param */
+          struct msm_audio_stream_config config;
+          if(ioctl(mFd, AUDIO_GET_STREAM_CONFIG, &config))
+          {
+            LOGE(" Error getting buf config param AUDIO_GET_STREAM_CONFIG \n");
+            goto  Error;
+          }
 
+          LOGE("The Config buffer size is %d", config.buffer_size);
+          LOGE("The Config buffer count is %d", config.buffer_count);
+
+          mDevices = devices;
+          mChannels = AudioSystem::CHANNEL_IN_MONO;
+          mSampleRate =8000;
+          mFormat = *pFormat;
+          mBufferSize = 1050;
+
+          struct msm_audio_qcelp_enc_config qcelp_enc_cfg;
+
+          if (ioctl(mFd, AUDIO_GET_QCELP_ENC_CONFIG, &qcelp_enc_cfg))
+          {
+            LOGE("Error: AUDIO_GET_QCELP_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config cdma_rate is %d", qcelp_enc_cfg.cdma_rate);
+          LOGV("The Config min_bit_rate is %d", qcelp_enc_cfg.min_bit_rate);
+          LOGV("The Config max_bit_rate is %d", qcelp_enc_cfg.max_bit_rate);
+
+          qcelp_enc_cfg.min_bit_rate = 4;
+          qcelp_enc_cfg.max_bit_rate = 4;
+
+          if (ioctl(mFd, AUDIO_SET_QCELP_ENC_CONFIG, &qcelp_enc_cfg))
+          {
+            LOGE("Error: AUDIO_SET_QCELP_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+    }
+    else if (*pFormat == AudioSystem::AMR_NB)
+    {
+        // open amr_nb input device
+          status = ::open(AMRNB_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open amr_nb device for read");
+              goto Error;
+          }
+          mFd = status;
+
+          /* Config param */
+          struct msm_audio_stream_config config;
+          if(ioctl(mFd, AUDIO_GET_STREAM_CONFIG, &config))
+          {
+            LOGE(" Error getting buf config param AUDIO_GET_STREAM_CONFIG \n");
+            goto  Error;
+          }
+
+          LOGE("The Config buffer size is %d", config.buffer_size);
+          LOGE("The Config buffer count is %d", config.buffer_count);
+
+          mDevices = devices;
+          mChannels = AudioSystem::CHANNEL_IN_MONO;
+          mSampleRate =8000;
+          mFormat = *pFormat;
+          mBufferSize = 1280;
+          struct msm_audio_amrnb_enc_config_v2 amr_nb_cfg;
+
+          if (ioctl(mFd, AUDIO_GET_AMRNB_ENC_CONFIG_V2, &amr_nb_cfg))
+          {
+            LOGE("Error: AUDIO_GET_AMRNB_ENC_CONFIG_V2 failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config band_mode is %d", amr_nb_cfg.band_mode);
+          LOGV("The Config dtx_enable is %d", amr_nb_cfg.dtx_enable);
+          LOGV("The Config frame_format is %d", amr_nb_cfg.frame_format);
+
+          amr_nb_cfg.band_mode = 7; /* Bit Rate 12.2 kbps MR122 */
+          amr_nb_cfg.dtx_enable= -1;
+          amr_nb_cfg.frame_format = 0; /* IF1 */
+
+          if (ioctl(mFd, AUDIO_SET_AMRNB_ENC_CONFIG_V2, &amr_nb_cfg))
+          {
+            LOGE("Error: AUDIO_SET_AMRNB_ENC_CONFIG_V2 failed\n");
+            goto  Error;
+          }
+    }
+    else if (*pFormat == AudioSystem::AAC)
+    {
+        // open aac input device
+          status = ::open(AAC_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open aac device for read");
+              goto Error;
+          }
+          mFd = status;
+
+          struct msm_audio_stream_config config;
+          if(ioctl(mFd, AUDIO_GET_STREAM_CONFIG, &config))
+          {
+            LOGE(" Error getting buf config param AUDIO_GET_STREAM_CONFIG \n");
+            goto  Error;
+          }
+
+          LOGE("The Config buffer size is %d", config.buffer_size);
+          LOGE("The Config buffer count is %d", config.buffer_count);
+
+
+          struct msm_audio_aac_enc_config aac_enc_cfg;
+          if (ioctl(mFd, AUDIO_GET_AAC_ENC_CONFIG, &aac_enc_cfg))
+          {
+            LOGE("Error: AUDIO_GET_AAC_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config channels is %d", aac_enc_cfg.channels);
+          LOGV("The Config sample_rate is %d", aac_enc_cfg.sample_rate);
+          LOGV("The Config bit_rate is %d", aac_enc_cfg.bit_rate);
+          LOGV("The Config stream_format is %d", aac_enc_cfg.stream_format);
+
+          mDevices = devices;
+          mChannels = *pChannels;
+          mSampleRate = *pRate;
+          mFormat = *pFormat;
+          mBufferSize = 2048;
+
+          if (ioctl(mFd, AUDIO_SET_AAC_ENC_CONFIG, &aac_enc_cfg))
+          {
+            LOGE("Error: AUDIO_SET_AAC_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+    }
     //mHardware->setMicMute_nosync(false);
     mState = AUDIO_INPUT_OPENED;
 
@@ -1037,7 +1254,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
     if (!mHardware) return -1;
 
     size_t count = bytes;
+    size_t  aac_framesize= bytes;
     uint8_t* p = static_cast<uint8_t*>(buffer);
+    uint32_t* recogPtr = (uint32_t *)p;
+    uint16_t* frameCountPtr;
+    uint16_t* frameSizePtr;
 
     if (mState < AUDIO_INPUT_OPENED) {
         AudioHardware *hw = mHardware;
@@ -1070,18 +1291,100 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
         mState = AUDIO_INPUT_STARTED;
     }
 
-    while (count) {
-        ssize_t bytesRead = ::read(mFd, buffer, count);
-        if (bytesRead >= 0) {
-            count -= bytesRead;
-            p += bytesRead;
-        } else {
-            if (errno != EAGAIN) return bytesRead;
-            mRetryCount++;
-            LOGW("EAGAIN - retrying");
+    bytes = 0;
+    if(mFormat == AUDIO_HW_IN_FORMAT)
+    {
+        while (count) {
+            ssize_t bytesRead = ::read(mFd, buffer, count);
+            if (bytesRead >= 0) {
+                count -= bytesRead;
+                p += bytesRead;
+            } else {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
         }
     }
-    return bytes;
+    else if ((mFormat == AudioSystem::EVRC) || (mFormat == AudioSystem::QCELP) || (mFormat == AudioSystem::AMR_NB))
+    {
+        uint8_t readBuf[36];
+        uint8_t *dataPtr;
+        while (count) {
+            dataPtr = readBuf;
+            ssize_t bytesRead = ::read(mFd, readBuf, 36);
+            if (bytesRead >= 0) {
+                if (mFormat == AudioSystem::AMR_NB){
+                   amr_transcode(dataPtr,p);
+                   p += AMRNB_FRAME_SIZE;
+                   count -= AMRNB_FRAME_SIZE;
+                   bytes += AMRNB_FRAME_SIZE;
+                }
+                else {
+                    dataPtr++;
+                    if (mFormat == AudioSystem::EVRC){
+                       memcpy(p, dataPtr, EVRC_FRAME_SIZE);
+                       p += EVRC_FRAME_SIZE;
+                       count -= EVRC_FRAME_SIZE;
+                       bytes += EVRC_FRAME_SIZE;
+                    }
+                    else if (mFormat == AudioSystem::QCELP){
+                       memcpy(p, dataPtr, QCELP_FRAME_SIZE);
+                       p += QCELP_FRAME_SIZE;
+                       count -= QCELP_FRAME_SIZE;
+                       bytes += QCELP_FRAME_SIZE;
+                    }
+                }
+
+            } else {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+    }
+    else if (mFormat == AudioSystem::AAC)
+    {
+        *((uint32_t*)recogPtr) = 0x51434F4D ;// ('Q','C','O', 'M') Number to identify format as AAC by higher layers
+        recogPtr++;
+        frameCountPtr = (uint16_t*)recogPtr;
+        *frameCountPtr = 0;
+        p += 3*sizeof(uint16_t);
+        count -= 3*sizeof(uint16_t);
+
+        while (count > 0) {
+            frameSizePtr = (uint16_t *)p;
+            p += sizeof(uint16_t);
+            if(!(count > 2)) break;
+            count -= sizeof(uint16_t);
+
+            ssize_t bytesRead = ::read(mFd, p, count);
+            if (bytesRead > 0) {
+                LOGV("Number of Bytes read = %d", bytesRead);
+                count -= bytesRead;
+                p += bytesRead;
+                bytes += bytesRead;
+                LOGV("Total Number of Bytes read = %d", bytes);
+
+                *frameSizePtr =  bytesRead;
+                (*frameCountPtr)++;
+            }
+            else if(bytesRead == 0)
+            {
+             LOGI("Bytes Read = %d ,Buffer no longer sufficient",bytesRead);
+             break;
+            } else {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+    }
+
+    if (mFormat == AudioSystem::AAC)
+         return aac_framesize;
+
+        return bytes;
 }
 
 status_t AudioHardware::AudioStreamInMSM72xx::standby()
@@ -1183,6 +1486,319 @@ String8 AudioHardware::AudioStreamInMSM72xx::getParameters(const String8& keys)
 
 extern "C" AudioHardwareInterface* createAudioHardware(void) {
     return new AudioHardware();
+}
+
+/*===========================================================================
+
+FUNCTION amrsup_frame_len
+
+DESCRIPTION
+  This function will determine number of bytes of AMR vocoder frame length
+based on the frame type and frame rate.
+
+DEPENDENCIES
+  None.
+
+RETURN VALUE
+  number of bytes of AMR frame
+
+SIDE EFFECTS
+  None.
+
+===========================================================================*/
+int amrsup_frame_len_bits(
+  amrsup_frame_type frame_type,
+  amrsup_mode_type amr_mode
+)
+{
+  int frame_len=0;
+
+
+  switch (frame_type)
+  {
+    case AMRSUP_SPEECH_GOOD :
+    case AMRSUP_SPEECH_DEGRADED :
+    case AMRSUP_ONSET :
+    case AMRSUP_SPEECH_BAD :
+      if (amr_mode >= AMRSUP_MODE_MAX)
+      {
+        frame_len = 0;
+      }
+      else
+      {
+        frame_len = amrsup_122_framing.len_a
+                    + amrsup_122_framing.len_b
+                    + amrsup_122_framing.len_c;
+      }
+      break;
+
+    case AMRSUP_SID_FIRST :
+    case AMRSUP_SID_UPDATE :
+    case AMRSUP_SID_BAD :
+      frame_len = AMR_CLASS_A_BITS_SID;
+      break;
+
+    case AMRSUP_NO_DATA :
+    case AMRSUP_SPEECH_LOST :
+    default :
+      frame_len = 0;
+  }
+
+  return frame_len;
+}
+
+/*===========================================================================
+
+FUNCTION amrsup_frame_len
+
+DESCRIPTION
+  This function will determine number of bytes of AMR vocoder frame length
+based on the frame type and frame rate.
+
+DEPENDENCIES
+  None.
+
+RETURN VALUE
+  number of bytes of AMR frame
+
+SIDE EFFECTS
+  None.
+
+===========================================================================*/
+int amrsup_frame_len(
+  amrsup_frame_type frame_type,
+  amrsup_mode_type amr_mode
+)
+{
+  int frame_len = amrsup_frame_len_bits(frame_type, amr_mode);
+
+  frame_len = (frame_len + 7) / 8;
+  return frame_len;
+}
+
+/*===========================================================================
+
+FUNCTION amrsup_tx_order
+
+DESCRIPTION
+  Use a bit ordering table to order bits from their original sequence.
+
+DEPENDENCIES
+  None.
+
+RETURN VALUE
+  None.
+
+SIDE EFFECTS
+  None.
+
+===========================================================================*/
+void amrsup_tx_order(
+  unsigned char *dst_frame,
+  int         *dst_bit_index,
+  unsigned char *src,
+  int         num_bits,
+  const unsigned short *order
+)
+{
+  unsigned long dst_mask = 0x00000080 >> ((*dst_bit_index) & 0x7);
+  unsigned char *dst = &dst_frame[((unsigned int) *dst_bit_index) >> 3];
+  unsigned long src_bit, src_mask;
+
+  /* Prepare to process all bits
+  */
+  *dst_bit_index += num_bits;
+  num_bits++;
+
+  while(--num_bits) {
+    /* Get the location of the bit in the input buffer */
+    src_bit  = (unsigned long ) *order++;
+    src_mask = 0x00000080 >> (src_bit & 0x7);
+
+    /* Set the value of the output bit equal to the input bit */
+    if (src[src_bit >> 3] & src_mask) {
+      *dst |= (unsigned char ) dst_mask;
+    }
+
+    /* Set the destination bit mask and increment pointer if necessary */
+    dst_mask >>= 1;
+    if (dst_mask == 0) {
+      dst_mask = 0x00000080;
+      dst++;
+    }
+  }
+} /* amrsup_tx_order */
+
+/*===========================================================================
+
+FUNCTION amrsup_if1_framing
+
+DESCRIPTION
+  Performs the transmit side framing function.  Generates AMR IF1 ordered data
+  from the vocoder packet and frame type.
+
+DEPENDENCIES
+  None.
+
+RETURN VALUE
+  number of bytes of encoded frame.
+  if1_frame : IF1-encoded frame.
+  if1_frame_info : holds frame information of IF1-encoded frame.
+
+SIDE EFFECTS
+  None.
+
+===========================================================================*/
+static int amrsup_if1_framing(
+  unsigned char              *vocoder_packet,
+  amrsup_frame_type          frame_type,
+  amrsup_mode_type           amr_mode,
+  unsigned char              *if1_frame,
+  amrsup_if1_frame_info_type *if1_frame_info
+)
+{
+  amrsup_frame_order_type *ordering_table;
+  int frame_len = 0;
+  int i;
+
+  if(amr_mode >= AMRSUP_MODE_MAX)
+  {
+    LOGE("Invalid AMR_Mode : %d",amr_mode);
+    return 0;
+  }
+
+  /* Initialize IF1 frame data and info */
+  if1_frame_info->fqi = true;
+
+  if1_frame_info->amr_type = AMRSUP_CODEC_AMR_NB;
+
+  memset(if1_frame, 0,
+           amrsup_frame_len(AMRSUP_SPEECH_GOOD, AMRSUP_MODE_1220));
+
+
+  switch (frame_type)
+  {
+    case AMRSUP_SID_BAD:
+      if1_frame_info->fqi = false;
+      /* fall thru */
+
+    case AMRSUP_SID_FIRST:
+    case AMRSUP_SID_UPDATE:
+      /* Set frame type index */
+      if1_frame_info->frame_type_index
+      = AMRSUP_FRAME_TYPE_INDEX_AMR_SID;
+
+
+      /* ===== Encoding SID frame ===== */
+      /* copy the sid frame to class_a data */
+      for (i=0; i<5; i++)
+      {
+        if1_frame[i] = vocoder_packet[i];
+      }
+
+      /* Set the SID type : SID_FIRST: Bit 35 = 0, SID_UPDATE : Bit 35 = 1 */
+      if (frame_type == AMRSUP_SID_FIRST)
+      {
+        if1_frame[4] &= ~0x10;
+      }
+
+      if (frame_type == AMRSUP_SID_UPDATE)
+      {
+        if1_frame[4] |= 0x10;
+      }
+      else
+      {
+      /* Set the mode (Bit 36 - 38 = amr_mode with bits swapped)
+      */
+      if1_frame[4] |= (((unsigned char)amr_mode << 3) & 0x08)
+        | (((unsigned char)amr_mode << 1) & 0x04) | (((unsigned char)amr_mode >> 1) & 0x02);
+
+      frame_len = AMR_CLASS_A_BITS_SID;
+      }
+
+      break;
+
+
+    case AMRSUP_SPEECH_BAD:
+      if1_frame_info->fqi = false;
+      /* fall thru */
+
+    case AMRSUP_SPEECH_GOOD:
+      /* Set frame type index */
+
+        if1_frame_info->frame_type_index
+        = (amrsup_frame_type_index_type)(amr_mode);
+
+      /* ===== Encoding Speech frame ===== */
+      /* Clear num bits in frame */
+      frame_len = 0;
+
+      /* Select ordering table */
+      ordering_table =
+      (amrsup_frame_order_type*)&amrsup_122_framing;
+
+      amrsup_tx_order(
+        if1_frame,
+        &frame_len,
+        vocoder_packet,
+        ordering_table->len_a,
+        ordering_table->class_a
+      );
+
+      amrsup_tx_order(
+        if1_frame,
+        &frame_len,
+        vocoder_packet,
+        ordering_table->len_b,
+        ordering_table->class_b
+      );
+
+      amrsup_tx_order(
+        if1_frame,
+        &frame_len,
+        vocoder_packet,
+        ordering_table->len_c,
+        ordering_table->class_c
+      );
+
+
+      /* frame_len already updated with correct number of bits */
+      break;
+
+
+
+    default:
+      LOGE("Unsupported frame type %d", frame_type);
+      /* fall thru */
+
+    case AMRSUP_NO_DATA:
+      /* Set frame type index */
+      if1_frame_info->frame_type_index = AMRSUP_FRAME_TYPE_INDEX_NO_DATA;
+
+      frame_len = 0;
+
+      break;
+  }  /* end switch */
+
+
+  /* convert bit length to byte length */
+  frame_len = (frame_len + 7) / 8;
+
+  return frame_len;
+}
+
+static void amr_transcode(unsigned char *src, unsigned char *dst)
+{
+   amrsup_frame_type frame_type_in = (amrsup_frame_type) *(src++);
+   amrsup_mode_type frame_rate_in = (amrsup_mode_type) *(src++);
+   amrsup_if1_frame_info_type frame_info_out;
+   unsigned char frameheader;
+
+   amrsup_if1_framing(src, frame_type_in, frame_rate_in, dst+1, &frame_info_out);
+   frameheader = (frame_info_out.frame_type_index << 3) + (frame_info_out.fqi << 2);
+   *dst = frameheader;
+
+   return;
 }
 
 }; // namespace android
