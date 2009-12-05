@@ -733,9 +733,9 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
 
         // open driver
         LOGV("open driver");
-        status = ::open("/dev/msm_pcm_dec", O_WRONLY/*O_RDWR*/);
+        status = ::open("/dev/msm_pcm_out", O_WRONLY/*O_RDWR*/);
         if (status < 0) {
-            LOGE("Cannot open /dev/msm_pcm_dec errno: %d", errno);
+            LOGE("Cannot open /dev/msm_pcm_out errno: %d", errno);
             goto Error;
         }
         mFd = status;
