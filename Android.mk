@@ -17,7 +17,7 @@
 common_msm_dirs := libcopybit liblights librpc libgralloc-qsd8k
 msm7k_dirs := $(common_msm_dirs) boot libaudio
 qsd8k_dirs := $(common_msm_dirs) libaudio-qsd8k
-msm7x30_dirs := $(common_msm_dirs) libaudio-msm7x30
+msm7x30_dirs := $(common_msm_dirs) libaudio-msm7x30 liboverlay
 
 ifeq ($(TARGET_BOARD_PLATFORM),msm7k)
     ifeq ($(BOARD_USES_QCOM_AUDIO_V2), true)
