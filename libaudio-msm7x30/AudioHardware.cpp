@@ -962,6 +962,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         return -EPERM;
     }
     status_t status =0;
+    struct msm_voicerec_mode voc_rec_cfg;
     if(*pFormat == AUDIO_HW_IN_FORMAT)
     {
         // open audio input device
@@ -1027,6 +1028,29 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
               goto Error;
           }
           mFd = status;
+          mDevices = devices;
+          mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                     (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                  LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
 
           /* Config param */
           struct msm_audio_stream_config config;
@@ -1039,8 +1063,6 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           LOGE("The Config buffer size is %d", config.buffer_size);
           LOGE("The Config buffer count is %d", config.buffer_count);
 
-          mDevices = devices;
-          mChannels = AudioSystem::CHANNEL_IN_MONO;
           mSampleRate =8000;
           mFormat = *pFormat;
           mBufferSize = 1150;
@@ -1074,6 +1096,29 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
               goto Error;
           }
           mFd = status;
+          mDevices = devices;
+          mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                  (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                  LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
 
           /* Config param */
           struct msm_audio_stream_config config;
@@ -1086,8 +1131,6 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           LOGE("The Config buffer size is %d", config.buffer_size);
           LOGE("The Config buffer count is %d", config.buffer_count);
 
-          mDevices = devices;
-          mChannels = AudioSystem::CHANNEL_IN_MONO;
           mSampleRate =8000;
           mFormat = *pFormat;
           mBufferSize = 1050;
@@ -1122,6 +1165,29 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
               goto Error;
           }
           mFd = status;
+          mDevices = devices;
+          mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                     (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                  LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
 
           /* Config param */
           struct msm_audio_stream_config config;
@@ -1134,8 +1200,6 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           LOGE("The Config buffer size is %d", config.buffer_size);
           LOGE("The Config buffer count is %d", config.buffer_count);
 
-          mDevices = devices;
-          mChannels = AudioSystem::CHANNEL_IN_MONO;
           mSampleRate =8000;
           mFormat = *pFormat;
           mBufferSize = 1280;
