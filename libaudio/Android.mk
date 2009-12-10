@@ -18,6 +18,9 @@ LOCAL_MODULE:= libaudiopolicy
 ifeq ($(BOARD_HAVE_BLUETOOTH),true)
   LOCAL_CFLAGS += -DWITH_A2DP
 endif
+ifeq ($(strip $(BOARD_NO_SPEAKER)),true)
+  LOCAL_CFLAGS += -DHW_NO_SPEAKER
+endif
 
 include $(BUILD_SHARED_LIBRARY)
 

@@ -1223,9 +1223,13 @@ AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterfa
         mForceUse[i] = AudioSystem::FORCE_NONE;
     }
 
+    uint32_t defaultDevice = (uint32_t) AudioSystem::DEVICE_OUT_EARPIECE;
     // devices available by default are speaker, ear piece and microphone
-    mAvailableOutputDevices = AudioSystem::DEVICE_OUT_EARPIECE |
-                        AudioSystem::DEVICE_OUT_SPEAKER;
+    mAvailableOutputDevices = AudioSystem::DEVICE_OUT_EARPIECE;
+#ifndef HW_NO_SPEAKER
+    mAvailableOutputDevices |= AudioSystem::DEVICE_OUT_SPEAKER;
+    defaultDevice = (uint32_t) AudioSystem::DEVICE_OUT_SPEAKER;
+#endif
     mAvailableInputDevices = AudioSystem::DEVICE_IN_BUILTIN_MIC;
 
     mA2dpDeviceAddress = String8("");
@@ -1233,7 +1237,7 @@ AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterfa
 
     // open hardware output
     AudioOutputDescriptor *outputDesc = new AudioOutputDescriptor();
-    outputDesc->mDevice = (uint32_t)AudioSystem::DEVICE_OUT_SPEAKER; // Setting the default device to speaker
+    outputDesc->mDevice = defaultDevice;
     mHardwareOutput = mpClientInterface->openOutput(&outputDesc->mDevice,
                                     &outputDesc->mSamplingRate,
                                     &outputDesc->mFormat,
@@ -1246,7 +1250,7 @@ AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterfa
                 outputDesc->mSamplingRate, outputDesc->mFormat, outputDesc->mChannels);
     } else {
         mOutputs.add(mHardwareOutput, outputDesc);
-        setOutputDevice(mHardwareOutput, (uint32_t)AudioSystem::DEVICE_OUT_SPEAKER, false);
+        setOutputDevice(mHardwareOutput, defaultDevice, false);
     }
 
     mA2dpOutput = 0;
@@ -1404,7 +1408,10 @@ uint32_t AudioPolicyManager::getDeviceForStrategy(routing_strategy strategy)
                                     if (device2 == 0) {
                                         device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_SPEAKER;
                                         if (device == 0) {
-                                            LOGE("getDeviceForStrategy() speaker device not found");
+                                            device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_EARPIECE;
+                                            if (device == 0) {
+                                                LOGE("getDeviceForStrategy() Earpiece device not found");
+                                            }
                                         }
                                     }
                                 }
