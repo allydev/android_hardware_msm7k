@@ -37,6 +37,9 @@
 
 #define LOG_SND_RPC 0  // Set to 1 to log sound RPC's
 
+#define DUALMIC_KEY "dualmic_enabled"
+#define TTY_MODE_KEY "tty_mode"
+
 #define AMRNB_DEVICE_IN "/dev/msm_amrnb_in"
 #define EVRC_DEVICE_IN "/dev/msm_evrc_in"
 #define QCELP_DEVICE_IN "/dev/msm_qcelp_in"
@@ -101,7 +104,8 @@ bool fmState = false;
 
 AudioHardware::AudioHardware() :
     mInit(false), mMicMute(true), mBluetoothNrec(true), mBluetoothId(0),
-    mOutput(0), mSndEndpoints(NULL), mCurSndDevice(-1)
+    mOutput(0), mSndEndpoints(NULL), mCurSndDevice(-1),
+    mTtyMode(TTY_OFF), mDualMicEnabled(false)
 {
 
         int control;
@@ -335,12 +339,49 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
            doRouting(NULL);
        }
     }
+
+    key = String8(DUALMIC_KEY);
+    if (param.get(key, value) == NO_ERROR) {
+        if (value == "true") {
+            mDualMicEnabled = true;
+            LOGI("DualMike feature Enabled");
+        } else {
+            mDualMicEnabled = false;
+            LOGI("DualMike feature Disabled");
+        }
+        doRouting(NULL);
+    }
+
+    key = String8(TTY_MODE_KEY);
+    if (param.get(key, value) == NO_ERROR) {
+        if (value == "full") {
+            mTtyMode = TTY_FULL;
+        } else if (value == "hco") {
+            mTtyMode = TTY_HCO;
+        } else if (value == "vco") {
+            mTtyMode = TTY_VCO;
+        } else {
+            mTtyMode = TTY_OFF;
+        }
+        LOGI("Changed TTY Mode=%s", value.string());
+        doRouting(NULL);
+    }
+
     return NO_ERROR;
 }
 
 String8 AudioHardware::getParameters(const String8& keys)
 {
     AudioParameter param = AudioParameter(keys);
+    String8 value;
+
+    String8 key = String8(DUALMIC_KEY);
+    if (param.get(key, value) == NO_ERROR) {
+        value = String8(mDualMicEnabled ? "true" : "false");
+        param.add(key, value);
+    }
+
+    LOGV("AudioHardware::getParameters() %s", param.toString().string());
     return param.toString();
 }
 
@@ -575,10 +616,18 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                      " picking closest possible route...", outputDevices);
             }
         }
-
-        if (outputDevices & AudioSystem::DEVICE_OUT_TTY) {
-                LOGI("Routing audio to TTY\n");
+        if ((mTtyMode != TTY_OFF) && (mMode == AudioSystem::MODE_IN_CALL) &&
+                (outputDevices & (AudioSystem::DEVICE_OUT_TTY | AudioSystem::DEVICE_OUT_WIRED_HEADSET))) {
+            if (mTtyMode == TTY_FULL) {
+                LOGI("Routing audio to TTY FULL Mode\n");
                 sndDevice = SND_DEVICE_TTY_FULL;
+            } else if (mTtyMode == TTY_VCO) {
+                LOGI("Routing audio to TTY VCO Mode\n");
+                sndDevice = SND_DEVICE_TTY_VCO;
+            } else if (mTtyMode == TTY_HCO) {
+                LOGI("Routing audio to TTY HCO Mode\n");
+                sndDevice = SND_DEVICE_TTY_HCO;
+            }
         } else if (outputDevices &
                    (AudioSystem::DEVICE_OUT_BLUETOOTH_SCO | AudioSystem::DEVICE_OUT_BLUETOOTH_SCO_HEADSET)) {
             LOGI("Routing audio to Bluetooth PCM\n");
@@ -626,6 +675,16 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
             LOGI("Routing audio to Handset\n");
             //sndDevice = SND_DEVICE_HANDSET;
             sndDevice = device_list[0].dev_id;
+        }
+    }
+
+    if (mDualMicEnabled && mMode == AudioSystem::MODE_IN_CALL) {
+        if (sndDevice == SND_DEVICE_HANDSET) {
+            LOGI("Routing audio to handset with DualMike enabled\n");
+            sndDevice = SND_DEVICE_IN_S_SADC_OUT_HANDSET;
+        } else if (sndDevice == SND_DEVICE_SPEAKER) {
+            LOGI("Routing audio to speakerphone with DualMike enabled\n");
+            sndDevice = SND_DEVICE_IN_S_SADC_OUT_SPEAKER_PHONE;
         }
     }
 

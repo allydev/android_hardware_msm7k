@@ -196,6 +196,12 @@ typedef struct {
   unsigned short *class_c;
 } amrsup_frame_order_type;
 
+enum tty_modes {
+    TTY_OFF = 0,
+    TTY_VCO = 1,
+    TTY_HCO = 2,
+    TTY_FULL = 3
+};
 
 #define CODEC_TYPE_PCM 0
 #define AUDIO_HW_NUM_OUT_BUF 2  // Number of buffers in audio driver for output
@@ -400,6 +406,8 @@ private:
             int mNumSndEndpoints;
             int mCurSndDevice;
             int m7xsnddriverfd;
+            bool    mDualMicEnabled;
+            int     mTtyMode;
 
      friend class AudioStreamInMSM72xx;
             Mutex       mLock;
