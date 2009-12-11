@@ -116,6 +116,7 @@ static int get_format(int format) {
 		case OVERLAY_FORMAT_RGB_565:       return MDP_RGB_565;
 		case OVERLAY_FORMAT_YCbCr_422_SP:  return MDP_Y_CBCR_H2V1;
 		case OVERLAY_FORMAT_YCbCr_420_SP:  return MDP_Y_CBCR_H2V2;
+                case OVERLAY_FORMAT_YCrCb_420_SP:  return MDP_Y_CRCB_H2V2;
 	}
 	return -1;
 }
