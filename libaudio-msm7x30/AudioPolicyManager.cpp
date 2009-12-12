@@ -986,15 +986,15 @@ audio_io_handle_t AudioPolicyManager::getInput(int inputSource,
         break;
     case AUDIO_SOURCE_VOICE_UPLINK:
         device = AudioSystem::DEVICE_IN_VOICE_CALL;
-        channels = AudioSystem::CHANNEL_IN_VOICE_UPLINK;
+        channels |= AudioSystem::CHANNEL_IN_VOICE_UPLINK;
         break;
     case AUDIO_SOURCE_VOICE_DOWNLINK:
         device = AudioSystem::DEVICE_IN_VOICE_CALL;
-        channels = AudioSystem::CHANNEL_IN_VOICE_DNLINK;
+        channels |= AudioSystem::CHANNEL_IN_VOICE_DNLINK;
         break;
     case AUDIO_SOURCE_VOICE_CALL:
         device = AudioSystem::DEVICE_IN_VOICE_CALL;
-        channels = (AudioSystem::CHANNEL_IN_VOICE_UPLINK | AudioSystem::CHANNEL_IN_VOICE_DNLINK);
+        channels |= (AudioSystem::CHANNEL_IN_VOICE_UPLINK | AudioSystem::CHANNEL_IN_VOICE_DNLINK);
         break;
     default:
         LOGW("getInput() invalid input source %d", inputSource);
