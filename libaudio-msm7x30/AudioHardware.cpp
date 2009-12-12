@@ -967,6 +967,12 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         *pFormat = AUDIO_HW_IN_FORMAT;
         return BAD_VALUE;
     }
+
+    if((*pFormat == AudioSystem::AAC) && (*pChannels & (AudioSystem::CHANNEL_IN_VOICE_DNLINK |  AudioSystem::CHANNEL_IN_VOICE_UPLINK))) {
+        LOGE("voice call recording in AAC format does not support");
+        return BAD_VALUE;
+    }
+
     if (pRate == 0) {
         return BAD_VALUE;
     }
@@ -976,8 +982,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         return BAD_VALUE;
     }
 
-    if (pChannels == 0 || (*pChannels != AudioSystem::CHANNEL_IN_MONO &&
-        *pChannels != AudioSystem::CHANNEL_IN_STEREO)) {
+    if (pChannels == 0 || (*pChannels & (AudioSystem::CHANNEL_IN_MONO | AudioSystem::CHANNEL_IN_STEREO)) == 0) {
         *pChannels = AUDIO_HW_IN_CHANNELS;
         return BAD_VALUE;
     }
@@ -1049,7 +1054,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
     }
     else if (*pFormat == AudioSystem::EVRC)
     {
-        // open evrc input device
+          LOGI("Recording format: EVRC");
+          // open evrc input device
           status = ::open(EVRC_DEVICE_IN, O_RDWR);
           if (status < 0) {
               LOGE("Cannot open evrc device for read");
@@ -1088,8 +1094,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
             goto  Error;
           }
 
-          LOGE("The Config buffer size is %d", config.buffer_size);
-          LOGE("The Config buffer count is %d", config.buffer_count);
+          LOGV("The Config buffer size is %d", config.buffer_size);
+          LOGV("The Config buffer count is %d", config.buffer_count);
 
           mSampleRate =8000;
           mFormat = *pFormat;
@@ -1117,7 +1123,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
     }
     else if (*pFormat == AudioSystem::QCELP)
     {
-        // open qcelp input device
+          LOGI("Recording format: QCELP");
+          // open qcelp input device
           status = ::open(QCELP_DEVICE_IN, O_RDWR);
           if (status < 0) {
               LOGE("Cannot open qcelp device for read");
@@ -1156,8 +1163,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
             goto  Error;
           }
 
-          LOGE("The Config buffer size is %d", config.buffer_size);
-          LOGE("The Config buffer count is %d", config.buffer_count);
+          LOGV("The Config buffer size is %d", config.buffer_size);
+          LOGV("The Config buffer count is %d", config.buffer_count);
 
           mSampleRate =8000;
           mFormat = *pFormat;
@@ -1186,7 +1193,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
     }
     else if (*pFormat == AudioSystem::AMR_NB)
     {
-        // open amr_nb input device
+          LOGI("Recording format: AMR_NB");
+          // open amr_nb input device
           status = ::open(AMRNB_DEVICE_IN, O_RDWR);
           if (status < 0) {
               LOGE("Cannot open amr_nb device for read");
@@ -1225,8 +1233,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
             goto  Error;
           }
 
-          LOGE("The Config buffer size is %d", config.buffer_size);
-          LOGE("The Config buffer count is %d", config.buffer_count);
+          LOGV("The Config buffer size is %d", config.buffer_size);
+          LOGV("The Config buffer count is %d", config.buffer_count);
 
           mSampleRate =8000;
           mFormat = *pFormat;
@@ -1255,7 +1263,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
     }
     else if (*pFormat == AudioSystem::AAC)
     {
-        // open aac input device
+          LOGI("Recording format: AAC");
+          // open aac input device
           status = ::open(AAC_DEVICE_IN, O_RDWR);
           if (status < 0) {
               LOGE("Cannot open aac device for read");
