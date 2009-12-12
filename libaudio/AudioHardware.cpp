@@ -1511,15 +1511,15 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         return BAD_VALUE;
     }
 
-    if (pChannels == 0 || (*pChannels != AudioSystem::CHANNEL_IN_MONO &&
-        *pChannels != AudioSystem::CHANNEL_IN_STEREO)) {
+    if (pChannels == 0 || (*pChannels & (AudioSystem::CHANNEL_IN_MONO | AudioSystem::CHANNEL_IN_STEREO)) == 0)
+    {
         *pChannels = AUDIO_HW_IN_CHANNELS;
         return BAD_VALUE;
     }
 
     mHardware = hw;
 
-    LOGV("AudioStreamInMSM72xx::set(%d, %d, %u)", *pFormat, *pChannels, *pRate);
+    LOGV("AudioStreamInMSM72xx::set(%d, %x, %u)", *pFormat, *pChannels, *pRate);
     if (mFd >= 0) {
         LOGE("Audio record already open");
         return -EPERM;
@@ -1601,28 +1601,34 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         goto  Error;
       }
 
-      LOGE("The Config buffer size is %d", config.buffer_size);
-      LOGE("The Config buffer count is %d", config.buffer_count);
-      LOGE("The Config Channel count is %d", config.channel_count);
-      LOGE("The Config Sample rate is %d", config.sample_rate);
+      LOGV("The Config buffer size is %d", config.buffer_size);
+      LOGV("The Config buffer count is %d", config.buffer_count);
+      LOGV("The Config Channel count is %d", config.channel_count);
+      LOGV("The Config Sample rate is %d", config.sample_rate);
 
       mDevices = devices;
-      mChannels = (config.channel_count > 1) ? AudioSystem::CHANNEL_IN_STEREO : AudioSystem::CHANNEL_IN_MONO;
+      mChannels = *pChannels;
       mSampleRate = config.sample_rate;
 
-      if((mDevices == AudioSystem::DEVICE_IN_VOICE_CALL) &&
-         (mChannels == AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
-         (mChannels != AudioSystem::CHANNEL_IN_VOICE_UPLINK))
-            gcfg.rec_type = RPC_VOC_REC_FORWARD;
-      else if ((mDevices == AudioSystem::DEVICE_IN_VOICE_CALL) &&
-               (mChannels != AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
-               (mChannels == AudioSystem::CHANNEL_IN_VOICE_UPLINK))
-                  gcfg.rec_type = RPC_VOC_REC_REVERSE;
-      else if ((mDevices == AudioSystem::DEVICE_IN_VOICE_CALL) &&
-               (mChannels == (AudioSystem::CHANNEL_IN_VOICE_DNLINK || AudioSystem::CHANNEL_IN_VOICE_UPLINK)))
-                  gcfg.rec_type = RPC_VOC_REC_BOTH;
-      else if(mDevices == (AudioSystem::DEVICE_IN_BUILTIN_MIC))
-                  gcfg.rec_type = RPC_VOC_REC_REVERSE;
+      if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+      {
+        if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+            (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+          LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+          gcfg.rec_type = RPC_VOC_REC_BOTH;
+        } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+          LOGI("Recording Source: Voice Call DownLink");
+          gcfg.rec_type = RPC_VOC_REC_FORWARD;
+        } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+          LOGI("Recording Source: Voice Call UpLink");
+          gcfg.rec_type = RPC_VOC_REC_REVERSE;
+        }
+      }
+      else if ((mDevices == AudioSystem::DEVICE_IN_BUILTIN_MIC) ||
+               (mDevices == AudioSystem::DEVICE_IN_WIRED_HEADSET)) {
+        LOGI("Recording Source: Mic/Headset");
+        gcfg.rec_type = RPC_VOC_REC_REVERSE;
+      }
 
       gcfg.rec_interval_ms = 0; // AV sync
       gcfg.auto_stop_ms = 0;
@@ -1631,6 +1637,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
       {
         case AudioSystem::AMR_NB:
         {
+          LOGI("Recording Format: AMR_NB");
           gcfg.capability = RPC_VOC_CAP_AMR; // RPC_VOC_CAP_AMR (64)
           gcfg.max_rate = RPC_VOC_AMR_RATE_1220; // Max rate (Fixed frame)
           gcfg.min_rate = RPC_VOC_AMR_RATE_1220; // Min rate (Fixed frame length)
@@ -1642,6 +1649,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
 
         case AudioSystem::EVRC:
         {
+          LOGI("Recording Format: EVRC");
           gcfg.capability = RPC_VOC_CAP_IS127;
           gcfg.max_rate = RPC_VOC_1_RATE; // Max rate (Fixed frame)
           gcfg.min_rate = RPC_VOC_1_RATE; // Min rate (Fixed frame length)
@@ -1653,6 +1661,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
 
         case AudioSystem::QCELP:
         {
+          LOGI("Recording Format: QCELP");
           gcfg.capability = RPC_VOC_CAP_IS733; // RPC_VOC_CAP_AMR (64)
           gcfg.max_rate = RPC_VOC_1_RATE; // Max rate (Fixed frame)
           gcfg.min_rate = RPC_VOC_1_RATE; // Min rate (Fixed frame length)
@@ -1682,15 +1691,15 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         goto  Error;
       }
 
-      LOGE("After set rec_type = 0x%8x\n",gcfg.rec_type);
-      LOGE("After set rec_interval_ms = 0x%8x\n",gcfg.rec_interval_ms);
-      LOGE("After set auto_stop_ms = 0x%8x\n",gcfg.auto_stop_ms);
-      LOGE("After set capability = 0x%8x\n",gcfg.capability);
-      LOGE("After set max_rate = 0x%8x\n",gcfg.max_rate);
-      LOGE("After set min_rate = 0x%8x\n",gcfg.min_rate);
-      LOGE("After set frame_format = 0x%8x\n",gcfg.frame_format);
-      LOGE("After set dtx_enable = 0x%8x\n",gcfg.dtx_enable);
-      LOGE("After set data_req_ms = 0x%8x\n",gcfg.data_req_ms);
+      LOGV("After set rec_type = 0x%8x\n",gcfg.rec_type);
+      LOGV("After set rec_interval_ms = 0x%8x\n",gcfg.rec_interval_ms);
+      LOGV("After set auto_stop_ms = 0x%8x\n",gcfg.auto_stop_ms);
+      LOGV("After set capability = 0x%8x\n",gcfg.capability);
+      LOGV("After set max_rate = 0x%8x\n",gcfg.max_rate);
+      LOGV("After set min_rate = 0x%8x\n",gcfg.min_rate);
+      LOGV("After set frame_format = 0x%8x\n",gcfg.frame_format);
+      LOGV("After set dtx_enable = 0x%8x\n",gcfg.dtx_enable);
+      LOGV("After set data_req_ms = 0x%8x\n",gcfg.data_req_ms);
     }
     else if(*pFormat == AudioSystem::AAC) {
       // open AAC input device
