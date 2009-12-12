@@ -77,6 +77,7 @@ int mixer_cnt = 0;
 unsigned short dec_id = 65535;
 unsigned short in_dec_id = 65535;
 bool VoiceDeviceIsEnabled = false;
+bool RxDeviceIsEnabled = false;
 typedef struct routing_table
 {
     unsigned short dec_id;
@@ -129,6 +130,7 @@ AudioHardware::AudioHardware() :
         }
        mInit = true;
        VoiceDeviceIsEnabled = false;
+       RxDeviceIsEnabled = false;
 }
 
 AudioHardware::~AudioHardware()
@@ -449,10 +451,16 @@ static status_t do_route_audio_rpc(uint32_t device,
     if (ear_mute == false) {
         if (VoiceDeviceIsEnabled == false) {
         LOGV("Going to enable RX/TX device for voice stream");
-            //Enable RX device
-            if(msm_en_device(device_list[0].dev_id, 1)) {
+            if (RxDeviceIsEnabled == false)
+            {
+                LOGV("Rx device is enabled");
+              //Enable RX device
+              if(msm_en_device(device_list[0].dev_id, 1)) {
                 LOGE("msm_en_device[0],1 failed errno = %d",errno);
                 return 0;
+              }
+
+              RxDeviceIsEnabled = true;
             }
             //Enable TX device
             if(msm_en_device(device_list[1].dev_id, 1)) {
@@ -470,10 +478,17 @@ static status_t do_route_audio_rpc(uint32_t device,
     else if (ear_mute == true) {
         if (VoiceDeviceIsEnabled == true) {
         LOGV("Going to disable RX/TX device during end of voice call");
-            //Disable RX device
-            if(msm_en_device(device_list[0].dev_id, 0)) {
+
+            if ( (RxDeviceIsEnabled == true) && (dec_id == 65535))
+            {
+                LOGV("Rx Device is disabled");
+              //Disable RX device
+              if(msm_en_device(device_list[0].dev_id, 0)) {
                 LOGE("msm_en_device[0],0 failed errno = %d",errno);
                 return 0;
+             }
+
+             RxDeviceIsEnabled = false;
             }
             //Disable TX device
             if(msm_en_device(device_list[1].dev_id, 0)) {
@@ -790,11 +805,17 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
                 LOGE("AUDIO_GET_SESSION_ID failed*********");
                 return 0;
             }
-	    LOGV("dec_id = %d\n",dec_id);
-	    if(msm_en_device(device_list[0].dev_id, 1)) {
+
+        if (RxDeviceIsEnabled == false)
+        {
+           LOGV("Going to enable device for PCM");
+	       if(msm_en_device(device_list[0].dev_id, 1)) {
 	        LOGE("msm_en_device failed");
 	        return 0;
-	    }
+	      }
+          RxDeviceIsEnabled = true;
+        }
+	    LOGV("Done with  enable device for PCM");
             if(msm_route_stream(1, dec_id, device_list[0].dev_id, 1)) {
                 LOGE("msm_route_stream failed");
                 return 0;
@@ -832,11 +853,18 @@ status_t AudioHardware::AudioStreamOutMSM72xx::standby()
     if (VoiceDeviceIsEnabled == false) {
     // Disable the Eapiece device, if there is nothing to render.
        if(dec_id != 65535) {
-         LOGV("Disable device");
-         if(msm_en_device(device_list[0].dev_id, 0)) {
-             LOGE("could not enable device\n");
-             return -1;
-         }
+
+           if (RxDeviceIsEnabled == true)
+           {
+             LOGV("Going to Disable device from standby");
+             if(msm_en_device(device_list[0].dev_id, 0)) {
+                LOGE("could not enable device\n");
+                return -1;
+             }
+          }
+
+         RxDeviceIsEnabled = false;
+         LOGV("after Disable device from standby");
          dec_id = 65535;
        }
     }
