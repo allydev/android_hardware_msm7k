@@ -65,13 +65,12 @@ static uint32_t SND_DEVICE_FM_HEADSET= 5;
 static uint32_t SND_DEVICE_BT=-1;
 static uint32_t SND_DEVICE_BT_EC_OFF=-1;
 static uint32_t SND_DEVICE_HEADSET_AND_SPEAKER=-1;
-static uint32_t SND_DEVICE_IN_S_SADC_OUT_HANDSET=-1;
-static uint32_t SND_DEVICE_IN_S_SADC_OUT_SPEAKER_PHONE=-1;
-static uint32_t SND_DEVICE_TTY_HEADSET=-1;
-static uint32_t SND_DEVICE_TTY_HCO=-1;
-static uint32_t SND_DEVICE_TTY_VCO=-1;
-
-static uint32_t SND_DEVICE_TTY_FULL=-1;
+static uint32_t SND_DEVICE_IN_S_SADC_OUT_HANDSET=9;
+static uint32_t SND_DEVICE_IN_S_SADC_OUT_SPEAKER_PHONE=10;
+static uint32_t SND_DEVICE_TTY_HEADSET=11;
+static uint32_t SND_DEVICE_TTY_HCO=12;
+static uint32_t SND_DEVICE_TTY_VCO=13;
+static uint32_t SND_DEVICE_TTY_FULL=14;
 static uint32_t SND_DEVICE_CARKIT=-1;
 static uint32_t SND_DEVICE_NO_MIC_HEADSET=-1;
 
@@ -84,6 +83,14 @@ static uint32_t DEVICE_HEADSET_TX = 5; //headset_mono_tx
 static uint32_t DEVICE_FMRADIO_HANDSET_RX= 6; //fmradio_handset_rx
 static uint32_t DEVICE_FMRADIO_HEADSET_RX= 7; //fmradio_headset_rx
 static uint32_t DEVICE_FMRADIO_SPEAKER_RX= 8; //fmradio_speaker_rx
+static uint32_t DEVICE_DUALMIC_HANDSET_TX = 9; //handset_dual_mic_endfire_tx
+static uint32_t DEVICE_DUALMIC_SPEAKER_TX = 10; //speaker_dual_mic_endfire_tx
+static uint32_t DEVICE_TTY_FULL_RX = 11; //tty_headset_mono_rx
+static uint32_t DEVICE_TTY_FULL_TX = 12; //tty_headset_mono_tx
+static uint32_t DEVICE_TTY_VCO_RX = 13; //tty_vco_rx
+static uint32_t DEVICE_TTY_VCO_TX = 14; //tty_vco_tx
+static uint32_t DEVICE_TTY_HCO_RX = 15; //tty_hco_rx
+static uint32_t DEVICE_TTY_HCO_TX = 16; //tty_hco_tx
 
 int dev_cnt = 0;
 char* name[20][44];
@@ -280,6 +287,22 @@ AudioHardware::AudioHardware() :
                 index = DEVICE_FMRADIO_HEADSET_RX;
             else if(strcmp((char* )&name[i][0],"fmradio_speaker_rx") == 0)
                 index = DEVICE_FMRADIO_SPEAKER_RX;
+            else if(strcmp((char* )&name[i][0],"handset_dual_mic_endfire_tx") == 0)
+                index = DEVICE_DUALMIC_HANDSET_TX;
+            else if(strcmp((char* )&name[i][0],"speaker_dual_mic_endfire_tx") == 0)
+                index = DEVICE_DUALMIC_SPEAKER_TX;
+            else if(strcmp((char* )&name[i][0],"tty_headset_mono_rx") == 0)
+                index = DEVICE_TTY_FULL_RX;
+            else if(strcmp((char* )&name[i][0],"tty_headset_mono_tx") == 0)
+                index = DEVICE_TTY_FULL_TX;
+            else if(strcmp((char* )&name[i][0],"tty_vco_tx") == 0)
+                index = DEVICE_TTY_VCO_TX;
+            else if(strcmp((char* )&name[i][0],"tty_vco_rx") == 0)
+                index = DEVICE_TTY_VCO_RX;
+            else if(strcmp((char* )&name[i][0],"tty_hco_rx") == 0)
+                index = DEVICE_TTY_HCO_RX;
+            else if(strcmp((char* )&name[i][0],"tty_hco_tx") == 0)
+                index = DEVICE_TTY_HCO_TX;
             else
                 continue;
             LOGV("index = %d",index);
@@ -683,6 +706,32 @@ static status_t do_route_audio_rpc(uint32_t device,
         new_tx_device = INVALID_DEVICE;
         LOGV("In FM HEADSET");
     }
+    else if(device == SND_DEVICE_IN_S_SADC_OUT_HANDSET) {
+        new_rx_device = DEVICE_HANDSET_RX;
+        new_tx_device = DEVICE_DUALMIC_HANDSET_TX;
+        LOGV("In DUALMIC_HANDSET");
+    }
+    else if(device == SND_DEVICE_IN_S_SADC_OUT_SPEAKER_PHONE) {
+        new_rx_device = DEVICE_SPEAKER_RX;
+        new_tx_device = DEVICE_DUALMIC_SPEAKER_TX;
+        LOGV("In DUALMIC_SPEAKER");
+    }
+    else if(device == SND_DEVICE_TTY_FULL) {
+        new_rx_device = DEVICE_TTY_FULL_RX;
+        new_tx_device = DEVICE_TTY_FULL_TX;
+        LOGV("In TTY_FULL");
+    }
+    else if(device == SND_DEVICE_TTY_VCO) {
+        new_rx_device = DEVICE_TTY_VCO_RX;
+        new_tx_device = DEVICE_TTY_VCO_TX;
+        LOGV("In TTY_VCO");
+    }
+    else if(device == SND_DEVICE_TTY_HCO) {
+        new_rx_device = DEVICE_TTY_HCO_RX;
+        new_tx_device = DEVICE_TTY_HCO_TX;
+        LOGV("In TTY_HCO");
+    }
+
     LOGV("new_rx = %d,new_tx = %d",new_rx_device,new_tx_device);
 
     if (ear_mute == false) {
