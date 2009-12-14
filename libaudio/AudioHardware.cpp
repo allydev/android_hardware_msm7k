@@ -79,8 +79,6 @@ static uint32_t SND_DEVICE_IN_S_SADC_OUT_SPEAKER_PHONE=-1;
 static uint32_t SND_DEVICE_TTY_HEADSET=-1;
 static uint32_t SND_DEVICE_TTY_HCO=-1;
 static uint32_t SND_DEVICE_TTY_VCO=-1;
-
-static uint32_t SND_DEVICE_TTY_FULL=-1;
 static uint32_t SND_DEVICE_CARKIT=-1;
 static uint32_t SND_DEVICE_FM_SPEAKER=-1;
 #define PCM_OUT_DEVICE "/dev/msm_pcm_out"
@@ -1002,7 +1000,7 @@ status_t AudioHardware::setVoiceVolume(float v)
     LOGD("setVoiceVolume(%f)\n", v);
     LOGI("Setting in-call volume to %d (available range is 0 to 7)\n", vol);
 
-    if (mCurSndDevice == SND_DEVICE_TTY_FULL || mCurSndDevice == SND_DEVICE_TTY_VCO)
+    if ((mCurSndDevice != -1) && ((mCurSndDevice == SND_DEVICE_TTY_HEADSET) || (mCurSndDevice == SND_DEVICE_TTY_VCO)))
     {
         vol = 1;
         LOGI("For TTY device in FULL or VCO mode, the volume level is set to: %d \n", vol);
@@ -1138,7 +1136,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                 (outputDevices & (AudioSystem::DEVICE_OUT_TTY | AudioSystem::DEVICE_OUT_WIRED_HEADSET))) {
             if (mTtyMode == TTY_FULL) {
                 LOGI("Routing audio to TTY FULL Mode\n");
-                sndDevice = SND_DEVICE_TTY_FULL;
+                sndDevice = SND_DEVICE_TTY_HEADSET;
             } else if (mTtyMode == TTY_VCO) {
                 LOGI("Routing audio to TTY VCO Mode\n");
                 sndDevice = SND_DEVICE_TTY_VCO;
