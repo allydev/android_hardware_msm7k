@@ -646,6 +646,9 @@ status_t AudioHardware::setMasterVolume(float v)
 static status_t do_route_audio_rpc(uint32_t device,
                                    bool ear_mute, bool mic_mute)
 {
+    if(device == -1)
+        return 0;
+
     int new_rx_device = INVALID_DEVICE,new_tx_device = INVALID_DEVICE;
     Routing_table* temp = NULL;
     LOGV("do_route_audio_rpc(%d, %d, %d)", device, ear_mute, mic_mute);
@@ -725,28 +728,7 @@ static status_t do_route_audio_rpc(uint32_t device,
             cur_tx = new_tx_device;
             addToTable(0,cur_rx,cur_tx,VOICE_CALL,true);
           //  VoiceDeviceIsEnabled = true;
-        }
-        else if(isStreamOnAndActive(VOICE_CALL)) { //TODO INCALL +
-                //device switch during voice call + FM_RADIO +  Basically iterate thtrough node and update device ids . Do special handling
-                LOGV("Device switch during voice call old devs = %d,%d and new devs = %d,%d",
-                        DEV_ID(cur_rx),DEV_ID(cur_tx),DEV_ID(new_rx_device),DEV_ID(new_tx_device));
-            temp = getNodeByStreamType(VOICE_CALL);
-            if(temp == NULL)
-                return 0;
-            if(temp->dev_id != INVALID_DEVICE && temp->dev_id_tx != INVALID_DEVICE) {
-                msm_route_voice(DEV_ID(temp->dev_id),DEV_ID(temp->dev_id_tx),0);
-                msm_en_device(DEV_ID(temp->dev_id),0);
-                msm_en_device(DEV_ID(temp->dev_id_tx),0);
-             }
-             if(new_rx_device != INVALID_DEVICE && new_tx_device != INVALID_DEVICE) {
-                 msm_route_voice(DEV_ID(new_rx_device),DEV_ID(new_tx_device),1);
-                 msm_en_device(DEV_ID(new_rx_device),1);
-                 msm_en_device(DEV_ID(new_tx_device),1);
-             }
-             cur_rx = new_rx_device;
-             cur_tx = new_tx_device;
-             modifyActiveDeviceOfStream(VOICE_CALL,cur_rx,cur_tx);
-        }
+    }
     else if (ear_mute == true && isStreamOnAndActive(VOICE_CALL)) {
         LOGV("Going to disable RX/TX device during end of voice call");
             if(isStreamOnAndActive(PCM_PLAY)) {
@@ -775,6 +757,27 @@ static status_t do_route_audio_rpc(uint32_t device,
 
             }
             deleteFromTable(VOICE_CALL);
+        }
+        else if(isStreamOnAndActive(VOICE_CALL)) { //TODO INCALL +
+                //device switch during voice call + FM_RADIO +  Basically iterate thtrough node and update device ids . Do special handling
+                LOGV("Device switch during voice call old devs = %d,%d and new devs = %d,%d",
+                        DEV_ID(cur_rx),DEV_ID(cur_tx),DEV_ID(new_rx_device),DEV_ID(new_tx_device));
+            temp = getNodeByStreamType(VOICE_CALL);
+            if(temp == NULL)
+                return 0;
+            if(temp->dev_id != INVALID_DEVICE && temp->dev_id_tx != INVALID_DEVICE) {
+                msm_route_voice(DEV_ID(temp->dev_id),DEV_ID(temp->dev_id_tx),0);
+                msm_en_device(DEV_ID(temp->dev_id),0);
+                msm_en_device(DEV_ID(temp->dev_id_tx),0);
+             }
+             if(new_rx_device != INVALID_DEVICE && new_tx_device != INVALID_DEVICE) {
+                 msm_route_voice(DEV_ID(new_rx_device),DEV_ID(new_tx_device),1);
+                 msm_en_device(DEV_ID(new_rx_device),1);
+                 msm_en_device(DEV_ID(new_tx_device),1);
+             }
+             cur_rx = new_rx_device;
+             cur_tx = new_tx_device;
+             modifyActiveDeviceOfStream(VOICE_CALL,cur_rx,cur_tx);
         }
         else if(fmState == false && isStreamOnAndActive(FM_RADIO)) {
         LOGV("Disable FM");
