@@ -93,6 +93,7 @@ AudioHardware::AudioHardware() :
     mBluetoothIdRx(0), mOutput(0),
     mNoiseSuppressionState(A1026_NS_STATE_AUTO)
 {
+#if 0
     int (*snd_get_num)();
     int (*snd_get_bt_endpoint)(msm_bt_endpoint *);
     int (*set_acoustic_parameters)();
@@ -141,14 +142,14 @@ AudioHardware::AudioHardware() :
     for (int i = 0; i < mNumBTEndpoints; i++) {
         LOGE("BT name %s (tx,rx)=(%d,%d)", mBTEndpoints[i].name, mBTEndpoints[i].tx, mBTEndpoints[i].rx);
     }
-
+#endif
     // reset voice mode in case media_server crashed and restarted while in call
     int fd = open("/dev/msm_audio_ctl", O_RDWR);
     if (fd >= 0) {
         ioctl(fd, AUDIO_STOP_VOICE, NULL);
         close(fd);
     }
-
+/*
     vr_mode_change = false;
     vr_mode_enabled = 0;
     enable1026 = 1;
@@ -161,7 +162,7 @@ AudioHardware::AudioHardware() :
     property_get("media.a1026.nsForVoiceRec", value, "0");
     vr_uses_ns = atoi(value);
     LOGV("Using Noise Suppression for Voice Rec is %d", vr_uses_ns);
-
+*/
     mInit = true;
 }
 
@@ -660,8 +661,10 @@ Incall:
 // always call with mutex held
 status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
 {
+/*
     if (support_a1026 == 1)
         doAudience_A1026_Control(mMode, mRecordState, device);
+*/
 
     if (device == (uint32_t)SND_DEVICE_BT || device == (uint32_t)SND_DEVICE_CARKIT) {
         if (!mBluetoothNrec) {
@@ -1358,12 +1361,13 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
             LOGE("Cannot start pcm playback");
             goto Error;
         }
-
+#if 0        
         status = ioctl(mFd, AUDIO_SET_VOLUME, &stream_volume);
         if (status < 0) {
             LOGE("Cannot start pcm playback");
             goto Error;
         }
+#endif
 
         LOGV("acquire wakelock");
         acquire_wake_lock(PARTIAL_WAKE_LOCK, kOutputWakelockStr);
