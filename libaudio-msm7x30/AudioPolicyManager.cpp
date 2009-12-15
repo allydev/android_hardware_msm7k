@@ -530,7 +530,7 @@ void AudioPolicyManager::setPhoneState(int state)
     uint32_t oldDtmfDevice = getDeviceForStrategy(STRATEGY_DTMF);
     uint32_t oldSonificationDevice = getDeviceForStrategy(STRATEGY_SONIFICATION) & ~AudioSystem::DEVICE_OUT_SPEAKER;
     mPhoneState = state;
-    bool force = false;
+    bool force = (mPhoneState == AudioSystem::MODE_IN_CALL);
     // check if a routing change is required for hardware output in the following
     // order of priority:
     // 1: a stream pertaining to sonification strategy is active
