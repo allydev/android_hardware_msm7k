@@ -35,6 +35,7 @@
 #include <linux/msm_mdp.h>
 #include <linux/msm_rotator.h>
 
+//#define USE_MSM_ROTATOR
 /*****************************************************************************/
 
 struct overlay_control_context_t {
@@ -335,7 +336,7 @@ public:
 			LOGE("%s: FBIOGET_VSCREENINFO failed!", __FUNCTION__);
 			goto overlay_create_fail;
 		}
-
+#ifdef USE_MSM_ROTATOR
 		rotator = open("/dev/msm_rotator", O_RDWR, 0);
 		if (rotator < 0) {
 			LOGE("%s: error opening rotator device!", __FUNCTION__);
@@ -346,7 +347,7 @@ public:
 			LOGE("%s: error starting rotator device!", __FUNCTION__);
 			goto overlay_create_fail2;
 		}
-
+#endif
 		/* number of buffer is not being used as overlay buffers are coming from client */
 		overlay = new overlay_object(fb, rotator, ctx->rotInfo.session_id, w, h, hw_format,
 				get_size(format, w, h), vinfo.xres, vinfo.yres, vinfo.bits_per_pixel, finfo.line_length);
@@ -370,7 +371,9 @@ public:
 		overlay_create_fail3:
 		delete overlay;
 		overlay_create_fail2:
+#ifdef USE_MSM_ROTATOR
 		close(rotator);
+#endif
 		overlay_create_fail:
 		close(fb);
 		return NULL;
@@ -387,11 +390,15 @@ public:
 		/* free resources associated with this overlay_t */
 		if (obj) {
 			ov = obj->getHwOv();
+#ifdef USE_MSM_ROTATOR
 			ioctl(obj->getRotFd(), MSM_ROTATOR_IOCTL_FINISH,
 				&ctx->rotInfo.session_id);
+#endif
 			ioctl(obj->getOvFd(), MSMFB_OVERLAY_UNSET, &(ov->id));
 			close(obj->getOvFd());
+#ifdef USE_MSM_ROTATOR
 			close(obj->getRotFd());
+#endif
 		}
 
 		delete overlay;
@@ -484,6 +491,7 @@ public:
 			case OVERLAY_DITHER:
 				break;
 			case OVERLAY_TRANSFORM:
+#ifdef USE_MSM_ROTATOR
 				switch ( value ) {
 					case 0:
 						flag = MDP_ROT_NOP;
@@ -507,6 +515,7 @@ public:
 
 				if (ioctl(obj->getOvFd(), MSMFB_OVERLAY_SET, ov))
 					LOGE("%s: MSMFB_OVERLAY_SET error!", __FUNCTION__);
+#endif
 				result = -EINVAL;
 				break;
 			default:
@@ -558,7 +567,9 @@ public:
 			LOGE("%s: error opening frame buffer!", __FUNCTION__);
 			return -errno;
 		}
-
+#ifndef USE_MSM_ROTATOR
+                return 0;
+#else
 		ctx->pmem = open("/dev/pmem_adsp", O_RDWR | O_SYNC);
 		if (ctx->pmem < 0) {
 			LOGE("Could not open pmem device!\n");
@@ -592,7 +603,7 @@ public:
 		ov_init_fail:
 		close(ctx->mFD);
 		return -1;
-
+#endif
 	}
 
 	int overlay_dequeueBuffer(struct overlay_data_device_t *dev,
@@ -625,7 +636,9 @@ public:
 		ctx->rot.src.offset = (uint32_t) buffer;
 		ctx->rot.dst.offset = (ctx->rot.dst.offset) ? 0 : ctx->pmem_offset;
 
+#ifdef USE_MSM_ROTATOR
 		result = ioctl(ctx->rotator, MSM_ROTATOR_IOCTL_ROTATE, &ctx->rot);
+#endif
 		if (!result) {
 			ctx->od_rot.data.offset = (uint32_t) ctx->rot.dst.offset;
 			odPtr = &ctx->od_rot;
