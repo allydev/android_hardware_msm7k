@@ -25,6 +25,11 @@
 
 #include <hardware_legacy/AudioHardwareBase.h>
 
+extern "C" {
+  #include <linux/msm_audio.h>
+}
+
+
 namespace android {
 
 // ----------------------------------------------------------------------------
@@ -100,8 +105,6 @@ namespace android {
 #define RX_IIR_ENABLE   0x0004
 #define RX_IIR_DISABLE  0x0000
 
-#define KEY_A1026_VR_MODE "vr_mode"
-
 struct msm_bt_endpoint {
     int tx;
     int rx;
@@ -125,20 +128,6 @@ struct rx_iir_filter {
     uint16_t iir_params[48];
 };
 
-struct msm_audio_config {
-    uint32_t buffer_size;
-    uint32_t buffer_count;
-    uint32_t channel_count;
-    uint32_t sample_rate;
-    uint32_t codec_type;
-    uint32_t unused[3];
-};
-
-struct msm_mute_info {
-    uint32_t mute;
-    uint32_t path;
-};
-
 #define CODEC_TYPE_PCM 0
 #define PCM_FILL_BUFFER_COUNT 1
 #define AUDIO_HW_NUM_OUT_BUF 2  // Number of buffers in audio driver for output
@@ -147,8 +136,8 @@ struct msm_mute_info {
 
 #define AUDIO_HW_IN_SAMPLERATE 8000                 // Default audio input sample rate
 #define AUDIO_HW_IN_CHANNELS (AudioSystem::CHANNEL_IN_MONO) // Default audio input channel mask
-#define AUDIO_HW_IN_BUFFERSIZE 2048                 // Default audio input buffer size
-#define AUDIO_KERNEL_PCM_IN_BUFFERSIZE 2048
+#define AUDIO_HW_IN_BUFFERSIZE 4096                 // Default audio input buffer size
+#define AUDIO_KERNEL_PCM_IN_BUFFERSIZE 4096
 #define AUDIO_HW_IN_FORMAT (AudioSystem::PCM_16_BIT)  // Default audio input sample format
 // ----------------------------------------------------------------------------
 
@@ -211,9 +200,7 @@ private:
     status_t    get_mMode();
     status_t    get_mRoutes();
     status_t    set_mRecordState(bool onoff);
-    status_t    doA1026_init();
     status_t    get_snd_dev();
-    status_t    doAudience_A1026_Control(int Mode, bool Record, uint32_t Routes);
     status_t    doRouting(AudioStreamInMSM72xx *input);
     status_t    updateACDB();
     status_t    updateBT();
@@ -293,8 +280,6 @@ private:
     };
 
             static const uint32_t inputSamplingRates[];
-    Mutex       mA1026Lock;
-    bool        mA1026Init;
             bool        mRecordState;
             bool        mInit;
             bool        mMicMute;
@@ -307,7 +292,6 @@ private:
             msm_bt_endpoint *mBTEndpoints;
             int mNumBTEndpoints;
             int mCurSndDevice;
-            int mNoiseSuppressionState;
 
      friend class AudioStreamInMSM72xx;
             Mutex       mLock;
