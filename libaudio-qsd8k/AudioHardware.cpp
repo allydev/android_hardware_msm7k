@@ -84,8 +84,9 @@ AudioHardware::AudioHardware() :
     if (fd >= 0) {
         ioctl(fd, AUDIO_STOP_VOICE, NULL);
         close(fd);
+    }
     mInit = true;
-}
+
 }
 AudioHardware::~AudioHardware()
 {
