@@ -188,6 +188,15 @@ void AudioHardware::closeInputStream(AudioStreamIn* in) {
 status_t AudioHardware::setMode(int mode)
 {
     status_t status = AudioHardwareBase::setMode(mode);
+
+    // This is to ensure that the concurrency scenario is handled. Right now on
+    // 8K voice call and pcm playback concurrency is not supported.
+    if (mOutput)
+    {
+        mOutput->setPhonestate(mode);
+        mOutput->closedecoder();
+    }
+
     if (status == NO_ERROR) {
         // make sure that doAudioRouteOrMute() is called by doRouting()
         // even if the new device selected is the same as current one.
@@ -528,46 +537,6 @@ status_t AudioHardware::get_snd_dev(void)
     return mCurSndDevice;
 }
 
-status_t AudioHardware::updateBT(void)
-{
-    int fd = 0;
-    uint32_t id[2];
-
-    fd = open("/dev/msm_audio_ctl", O_RDWR);
-    if (fd < 0)        {
-       LOGE("Cannot open msm_audio_ctl");
-       return -1;
-    }
-    int rc = 0;
-    if (mBluetoothIdRx != -1UL) {
-        id[0] = mBluetoothIdRx;
-        id[1] = curr_out_device;
-        LOGE("(mBluetoothIdRx, curr_out_device) = (%d, %d)", mBluetoothIdRx, curr_out_device);
-        rc = ioctl(fd, AUDIO_UPDATE_ACDB, &id);
-        if (rc) {
-           LOGE("Cannot update RX ACDB %d, rc=%d", mBluetoothIdRx, rc);
-           close(fd);
-           return -1;
-        } else
-           LOGD("update TX ACDB %d success", mBluetoothIdRx);
-    }
-
-    if (mBluetoothIdTx != -1UL) {
-        id[0] = mBluetoothIdTx;
-        id[1] = curr_mic_device;
-        LOGE("(mBluetoothIdTx, curr_out_device) = (%d, %d)", mBluetoothIdTx, curr_out_device);
-        rc = ioctl(fd, AUDIO_UPDATE_ACDB, &id);
-        if (rc) {
-           LOGE("Cannot update TX ACDB %d, rc = %d", mBluetoothIdTx, rc);
-           close(fd);
-           return -1;
-        } else
-           LOGD("update TX ACDB %d success", mBluetoothIdTx);
-    }
-    close(fd);
-    return 0;
-}
-
 // always call with mutex held
 status_t AudioHardware::updateACDB(void)
 {
@@ -767,10 +736,6 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
     if ((sndDevice != -1 && sndDevice != mCurSndDevice)) {
         ret = doAudioRouteOrMute(sndDevice);
         mCurSndDevice = sndDevice;
-        if (mMode == AudioSystem::MODE_IN_CALL && mBluetoothIdTx != 0
-                && sndDevice == SND_DEVICE_BT) {
-            ret = updateBT();
-        } else if (!ret) ret = updateACDB();
     }
 
     return ret;
@@ -937,6 +902,17 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
         mHardware->updateACDB();
     }
 
+    if (mPhonestate == AudioSystem::MODE_IN_CALL)
+    {
+        if (mFd >= 0)
+        {
+            ::close(mFd);
+            mFd = -1;
+        }
+
+        return bytes;
+    }
+
     while (count) {
         ssize_t written = ::write(mFd, p, count);
         if (written >= 0) {
@@ -974,6 +950,16 @@ status_t AudioHardware::AudioStreamOutMSM72xx::standby()
     mStandby = true;
     LOGI("AudioHardware pcm playback is going to standby.");
     return status;
+}
+
+void AudioHardware::AudioStreamOutMSM72xx::closedecoder()
+{
+    if ( (mFd >=0) && (mPhonestate == AudioSystem::MODE_IN_CALL) )
+    {
+        ::close(mFd);
+        mFd = -1;
+        LOGE("Close PCM decoder, since Voice call is about to get active");
+    }
 }
 
 status_t AudioHardware::AudioStreamOutMSM72xx::dump(int fd, const Vector<String16>& args)
