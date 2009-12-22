@@ -45,10 +45,7 @@ struct private_module_t {
     buffer_handle_t currentBuffer;
     int pmem_master;
     void* pmem_master_base;
-    unsigned long pmem_master_phys;
     unsigned long master_phys;
-    int gpu;
-    void* gpu_base;
 
     struct fb_var_screeninfo info;
     struct fb_fix_screeninfo finfo;
@@ -74,7 +71,6 @@ struct private_handle_t {
     enum {
         PRIV_FLAGS_FRAMEBUFFER = 0x00000001,
         PRIV_FLAGS_USES_PMEM   = 0x00000002,
-        PRIV_FLAGS_USES_GPU    = 0x00000004,
     };
 
     enum {
@@ -117,7 +113,7 @@ struct private_handle_t {
     }
 
     bool usesPhysicallyContiguousMemory() {
-        return (flags & (PRIV_FLAGS_USES_PMEM|PRIV_FLAGS_USES_GPU)) != 0;
+        return (flags & PRIV_FLAGS_USES_PMEM) != 0;
     }
 
     static int validate(const native_handle* h) {
