@@ -17,7 +17,7 @@
 
 #include <math.h>
 
-//#define LOG_NDEBUG 0
+#define LOG_NDEBUG 0
 #define LOG_TAG "AudioHardwareMSM7X30"
 #include <utils/Log.h>
 #include <utils/String8.h>
@@ -92,8 +92,9 @@ static uint32_t DEVICE_TTY_VCO_TX = 14; //tty_vco_tx
 static uint32_t DEVICE_TTY_HCO_RX = 15; //tty_hco_rx
 static uint32_t DEVICE_TTY_HCO_TX = 16; //tty_hco_tx
 
+
 int dev_cnt = 0;
-char* name[20][44];
+const char ** name = NULL;
 int mixer_cnt = 0;
 static uint32_t cur_tx = INVALID_DEVICE;
 static uint32_t cur_rx = INVALID_DEVICE;
@@ -114,7 +115,8 @@ typedef struct device_table
     int class_id;
     int capability;
 }Device_table;
-Device_table device_list[20];
+Device_table* device_list;
+
 static void amr_transcode(unsigned char *src, unsigned char *dst);
 bool fmState = false;
 
@@ -263,53 +265,59 @@ AudioHardware::AudioHardware() :
         mixer_cnt = msm_mixer_count();
         LOGE("msm_mixer_count:mixer_cnt =%d",mixer_cnt);
 
-        dev_cnt = msm_get_device_list(name);
-        LOGE("got device_list %d",dev_cnt);
-        for(i = 0;i<20;i++)
+        dev_cnt = msm_get_device_count();
+        LOGV("got device_count %d",dev_cnt);
+        name = msm_get_device_list();
+        device_list = (Device_table* )malloc(sizeof(Device_table)*dev_cnt);
+        if(device_list == NULL) {
+            LOGE("malloc failed for device list");
+            return;
+        }
+        for(i = 0;i<dev_cnt;i++)
             device_list[i].dev_id = INVALID_DEVICE;
 
         for(i = 0; i < dev_cnt;i++) {
-            if(strcmp((char* )&name[i][0],"handset_rx") == 0)
+            if(strcmp((char* )name[i],"handset_rx") == 0)
                 index = DEVICE_HANDSET_RX;
-            else if(strcmp((char* )&name[i][0],"handset_tx") == 0)
+            else if(strcmp((char* )name[i],"handset_tx") == 0)
                 index = DEVICE_HANDSET_TX;
-            else if(strcmp((char* )&name[i][0],"speaker_stereo_rx") == 0)
+            else if(strcmp((char* )name[i],"speaker_stereo_rx") == 0)
                 index = DEVICE_SPEAKER_RX;
-            else if(strcmp((char* )&name[i][0],"speaker_mono_tx") == 0)
+            else if(strcmp((char* )name[i],"speaker_mono_tx") == 0)
                 index = DEVICE_SPEAKER_TX;
-            else if(strcmp((char* )&name[i][0],"headset_stereo_rx") == 0)
+            else if(strcmp((char* )name[i],"headset_stereo_rx") == 0)
                 index = DEVICE_HEADSET_RX;
-            else if(strcmp((char* )&name[i][0],"headset_mono_tx") == 0)
+            else if(strcmp((char* )name[i],"headset_mono_tx") == 0)
                 index = DEVICE_HEADSET_TX;
-            else if(strcmp((char* )&name[i][0],"fmradio_handset_rx") == 0)
+            else if(strcmp((char* )name[i],"fmradio_handset_rx") == 0)
                 index = DEVICE_FMRADIO_HANDSET_RX;
-            else if(strcmp((char* )&name[i][0],"fmradio_headset_rx") == 0)
+            else if(strcmp((char* )name[i],"fmradio_headset_rx") == 0)
                 index = DEVICE_FMRADIO_HEADSET_RX;
-            else if(strcmp((char* )&name[i][0],"fmradio_speaker_rx") == 0)
+            else if(strcmp((char* )name[i],"fmradio_speaker_rx") == 0)
                 index = DEVICE_FMRADIO_SPEAKER_RX;
-            else if(strcmp((char* )&name[i][0],"handset_dual_mic_endfire_tx") == 0)
+            else if(strcmp((char* )name[i],"handset_dual_mic_endfire_tx") == 0)
                 index = DEVICE_DUALMIC_HANDSET_TX;
-            else if(strcmp((char* )&name[i][0],"speaker_dual_mic_endfire_tx") == 0)
+            else if(strcmp((char* )name[i],"speaker_dual_mic_endfire_tx") == 0)
                 index = DEVICE_DUALMIC_SPEAKER_TX;
-            else if(strcmp((char* )&name[i][0],"tty_headset_mono_rx") == 0)
+            else if(strcmp((char* )name[i],"tty_headset_mono_rx") == 0)
                 index = DEVICE_TTY_FULL_RX;
-            else if(strcmp((char* )&name[i][0],"tty_headset_mono_tx") == 0)
+            else if(strcmp((char* )name[i],"tty_headset_mono_tx") == 0)
                 index = DEVICE_TTY_FULL_TX;
-            else if(strcmp((char* )&name[i][0],"tty_vco_tx") == 0)
+            else if(strcmp((char* )name[i],"tty_vco_tx") == 0)
                 index = DEVICE_TTY_VCO_TX;
-            else if(strcmp((char* )&name[i][0],"tty_vco_rx") == 0)
+            else if(strcmp((char* )name[i],"tty_vco_rx") == 0)
                 index = DEVICE_TTY_VCO_RX;
-            else if(strcmp((char* )&name[i][0],"tty_hco_rx") == 0)
+            else if(strcmp((char* )name[i],"tty_hco_rx") == 0)
                 index = DEVICE_TTY_HCO_RX;
-            else if(strcmp((char* )&name[i][0],"tty_hco_tx") == 0)
+            else if(strcmp((char* )name[i],"tty_hco_tx") == 0)
                 index = DEVICE_TTY_HCO_TX;
             else
                 continue;
             LOGV("index = %d",index);
 
-            device_list[index].dev_id = msm_get_device((char* )&name[i][0]);
+            device_list[index].dev_id = msm_get_device((char* )name[i]);
             if(device_list[index].dev_id >= 0) {
-                    LOGV("Found device: %s:index = %d,dev_id: %d",( char* )&name[i][0], index,device_list[index].dev_id);
+                    LOGV("Found device: %s:index = %d,dev_id: %d",( char* )name[i], index,device_list[index].dev_id);
             }
             device_list[index].class_id = msm_get_device_class(device_list[index].dev_id);
             device_list[index].capability = msm_get_device_capability(device_list[index].dev_id);
