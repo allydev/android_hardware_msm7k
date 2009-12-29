@@ -126,6 +126,46 @@ AudioHardware::AudioHardware() :
             }
         }
         else LOGE("Could not retrieve number of MSM SND endpoints.");
+
+        int AUTO_VOLUME_ENABLED = 1; // setting enabled as default
+
+        static const char *const path = "/system/etc/AutoVolumeControl.txt";
+        int txtfd;
+        struct stat st;
+        char *read_buf;
+
+        txtfd = open(path, O_RDONLY);
+        if (txtfd < 0) {
+            LOGE("failed to open AUTO_VOLUME_CONTROL %s: %s (%d)",
+                  path, strerror(errno), errno);
+        }
+        else {
+            if (fstat(txtfd, &st) < 0) {
+                LOGE("failed to stat %s: %s (%d)",
+                      path, strerror(errno), errno);
+                close(txtfd);
+            }
+
+            read_buf = (char *) mmap(0, st.st_size,
+                        PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE,
+                        txtfd, 0);
+
+            if (read_buf == MAP_FAILED) {
+                LOGE("failed to mmap parameters file: %s (%d)",
+                      strerror(errno), errno);
+                close(txtfd);
+            }
+
+            if(read_buf[0] =='0')
+               AUTO_VOLUME_ENABLED = 0;
+
+            munmap(read_buf, st.st_size);
+            close(txtfd);
+        }
+
+        ioctl(m7xsnddriverfd, SND_AVC_CTL, &AUTO_VOLUME_ENABLED);
+        ioctl(m7xsnddriverfd, SND_AGC_CTL, &AUTO_VOLUME_ENABLED);
     }
 	else LOGE("Could not open MSM SND driver.");
 }

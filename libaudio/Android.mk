@@ -43,6 +43,31 @@ ifneq ($(TARGET_SIMULATOR),true)
 LOCAL_SHARED_LIBRARIES += libdl
 endif
 
+# copy AudioFilter.csv to etc folder
+
+copy_from := AudioFilter.csv
+
+copy_to := $(addprefix $(TARGET_OUT_ETC)/,$(copy_from))
+copy_from := $(addprefix $(LOCAL_PATH)/,$(copy_from))
+
+$(copy_to) : PRIVATE_MODULE := system_etcdir
+$(copy_to) : $(TARGET_OUT_ETC)/% : $(LOCAL_PATH)/% | $(ACP)
+	$(transform-prebuilt-to-target)
+
+ALL_PREBUILT += $(copy_to)
+
+#copy AutoVolumeControl.txt to etc folder
+
+copy_from := AutoVolumeControl.txt
+copy_to := $(addprefix $(TARGET_OUT_ETC)/,$(copy_from))
+copy_from := $(addprefix $(LOCAL_PATH)/,$(copy_from))
+
+$(copy_to) : PRIVATE_MODULE := system_etcdir
+$(copy_to) : $(TARGET_OUT_ETC)/% : $(LOCAL_PATH)/% | $(ACP)
+	$(transform-prebuilt-to-target)
+
+ALL_PREBUILT += $(copy_to)
+
 LOCAL_SRC_FILES += AudioHardware.cpp
 
 LOCAL_CFLAGS += -fno-short-enums
