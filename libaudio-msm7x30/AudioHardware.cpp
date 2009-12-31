@@ -742,9 +742,7 @@ static status_t do_route_audio_rpc(uint32_t device,
 
     LOGV("new_rx = %d,new_tx = %d",new_rx_device,new_tx_device);
 
-    if (ear_mute == false) {
-        //if (VoiceDeviceIsEnabled == false)    //don't need anymore with linked list
-        if(!isStreamOn(VOICE_CALL)) {
+    if (ear_mute == false && !isStreamOn(VOICE_CALL)) {
         LOGV("Going to enable RX/TX device for voice stream");
             if(isStreamOnAndActive(FM_RADIO)) {
                 modifyActiveStateOfStream(FM_RADIO,false);
@@ -770,7 +768,6 @@ static status_t do_route_audio_rpc(uint32_t device,
                 return 0;
               }
 
-            }
            //Enable RX device
             if(new_rx_device != INVALID_DEVICE /*&& new_rx_device != cur_rx*/ && msm_en_device(DEV_ID(new_rx_device), 1)) {
                 LOGE("msm_en_device[%d],1 failed errno = %d",DEV_ID(new_rx_device),errno);
