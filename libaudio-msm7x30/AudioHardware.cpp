@@ -803,8 +803,6 @@ static status_t do_route_audio_rpc(uint32_t device,
                     modifyActiveStateOfStream(FM_RADIO,true);
                 }
                 else if(new_rx_device != INVALID_DEVICE && new_tx_device != INVALID_DEVICE) {
-                        msm_en_device(DEV_ID(new_rx_device),1);
-                        msm_en_device(DEV_ID(new_tx_device),1);
                         cur_rx = new_rx_device;
                         cur_tx = new_tx_device;
                 }
@@ -1193,6 +1191,16 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
         }
         mFd = status;
 
+        if(msm_en_device(DEV_ID(cur_tx), 1)) {
+            LOGE("msm_en_device failed for device cur_tx %d", cur_tx);
+            return 0;
+        }
+
+        if(msm_en_device(DEV_ID(cur_rx), 1)) {
+            LOGE("msm_en_device failed for device cur_rx %d", cur_rx);
+            return 0;
+        }
+
         // configuration
         LOGV("get config");
         struct msm_audio_config config;
@@ -1288,6 +1296,19 @@ status_t AudioHardware::AudioStreamOutMSM72xx::standby()
         return -1;
     }
     deleteFromTable(PCM_PLAY);
+
+    if(!getNodeByStreamType(VOICE_CALL)) {
+        if(msm_en_device(DEV_ID(cur_tx), 0)) {
+            LOGE("Disabling device failed for cur_tx %d", cur_tx);
+            return 0;
+        }
+
+        if(msm_en_device(DEV_ID(cur_rx), 0)) {
+            LOGE("Disabling device failed for cur_rx %d", cur_rx);
+            return 0;
+        }
+    }
+
     mStandby = true;
     return status;
 }
