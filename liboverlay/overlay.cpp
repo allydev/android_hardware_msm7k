@@ -44,7 +44,6 @@ struct overlay_control_context_t {
 	/* our private state goes below here */
 	struct overlay_t* overlay;
 	struct msm_rotator_img_info rotInfo;
-	struct mdp_overlay ov;
 };
 
 struct overlay_data_context_t {
@@ -188,6 +187,7 @@ public:
 		mHandle.rot_fd = rotator;
 		mHandle.rot_ssid = rot_ssid;
 
+		memset((void *)&mHandle.ov, 0, sizeof(mHandle.ov));
 		mHandle.ov.id = MSMFB_NEW_REQUEST;
 		mHandle.ov.src.width  = w;
 		mHandle.ov.src.height = h;
@@ -224,6 +224,7 @@ public:
 	struct mdp_overlay * getHwOv(void) {
 		return &mHandle.ov;
 	}
+	int getHwOvId(void) {return mHandle.ov.id;}
 	struct overlay_hw_info * getOvHwInfo(void) {
 		return &mHandle.ovHwInfo;
 	}
@@ -359,7 +360,6 @@ public:
 		}
 
 		hwOv = overlay->getHwOv();
-		ctx->ov = *hwOv;
 
 		if (ioctl(fb, MSMFB_OVERLAY_SET, hwOv)) {
 			LOGE("%s: MSMFB_OVERLAY_SET error!", __FUNCTION__);
@@ -385,17 +385,17 @@ public:
 	{
 		overlay_control_context_t *ctx = (overlay_control_context_t *)dev;
 		overlay_object *obj = static_cast<overlay_object *>(overlay);
-		struct mdp_overlay * ov;
+		int ovId;
 
 
 		/* free resources associated with this overlay_t */
 		if (obj) {
-			ov = obj->getHwOv();
+			ovId = obj->getHwOvId();
 #ifdef USE_MSM_ROTATOR
 			ioctl(obj->getRotFd(), MSM_ROTATOR_IOCTL_FINISH,
 				&ctx->rotInfo.session_id);
 #endif
-			ioctl(obj->getOvFd(), MSMFB_OVERLAY_UNSET, &(ov->id));
+			ioctl(obj->getOvFd(), MSMFB_OVERLAY_UNSET, &ovId);
 			close(obj->getOvFd());
 #ifdef USE_MSM_ROTATOR
 			close(obj->getRotFd());
@@ -412,16 +412,20 @@ public:
 		/* set this overlay's position (talk to the h/w) */
 		overlay_control_context_t *ctx = (overlay_control_context_t *)dev;
 		overlay_object * obj = static_cast<overlay_object *>(overlay);
-		struct mdp_overlay * ov;
+		struct mdp_overlay ov;
 
-		ov = obj->getHwOv();
+		ov.id = obj->getHwOvId();
+		if (ioctl(obj->getOvFd(), MSMFB_OVERLAY_GET, &ov)) {
+			LOGE("%s: MSMFB_OVERLAY_GET error!", __FUNCTION__);
+			return -errno;
+		}
 
-		ov->dst_rect.x = x;
-		ov->dst_rect.y = y;
-		ov->dst_rect.w = w;
-		ov->dst_rect.h = h;
+		ov.dst_rect.x = x;
+		ov.dst_rect.y = y;
+		ov.dst_rect.w = w;
+		ov.dst_rect.h = h;
 
-		if (ioctl(obj->getOvFd(), MSMFB_OVERLAY_SET, ov)) {
+		if (ioctl(obj->getOvFd(), MSMFB_OVERLAY_SET, &ov)) {
 			LOGE("%s: MSMFB_OVERLAY_SET error!", __FUNCTION__);
 			return -errno;
 		}
@@ -441,14 +445,18 @@ public:
 
 		/* get this overlay's position */
 		overlay_object * obj = static_cast<overlay_object *>(overlay);
-		struct mdp_overlay * ov;
+		struct mdp_overlay ov;
 
-		ov = obj->getHwOv();
+		ov.id = obj->getHwOvId();
+		if (ioctl(obj->getOvFd(), MSMFB_OVERLAY_GET, &ov)) {
+			LOGE("%s: MSMFB_OVERLAY_GET error!", __FUNCTION__);
+			return -errno;
+		}
 
-		*x = ov->dst_rect.x;
-		*y = ov->dst_rect.y;
-		*w = ov->dst_rect.w;
-		*h = ov->dst_rect.h;
+		*x = ov.dst_rect.x;
+		*y = ov.dst_rect.y;
+		*w = ov.dst_rect.w;
+		*h = ov.dst_rect.h;
 
 		return 0;
 	}
@@ -471,6 +479,18 @@ public:
 		return result;
 	}
 
+	static void overlay_src_swap(struct mdp_overlay *ov) {
+		int tmp;
+
+		tmp = ov->src.width;
+		ov->src.width = ov->src.height;
+		ov->src.height = tmp;
+
+		tmp = ov->src_rect.w;
+		ov->src_rect.w = ov->src_rect.h;
+		ov->src_rect.h = tmp;
+	}
+
 	static int overlay_setParameter(struct overlay_control_device_t *dev,
 									overlay_t* overlay, int param, int value) {
 
@@ -478,9 +498,14 @@ public:
 		overlay_object *obj = static_cast<overlay_object *>(overlay);
 		int result = 0;
 		int flag;
-		struct mdp_overlay * ov;
+		int tmp;
+		struct mdp_overlay ov;
 
-		ov = obj->getHwOv();
+		ov.id = obj->getHwOvId();
+		if (ioctl(obj->getOvFd(), MSMFB_OVERLAY_GET, &ov)) {
+			LOGE("%s: MSMFB_OVERLAY_GET error!", __FUNCTION__);
+			return -errno;
+		}
 
 		/* set this overlay's parameter (talk to the h/w) */
 		switch (param) {
@@ -495,26 +520,32 @@ public:
 #ifdef USE_MSM_ROTATOR
 				switch ( value ) {
 					case 0:
+						if (ov.user_data[0] & MDP_ROT_90) {
+							tmp = ov.src_rect.y;
+							ov.src_rect.y = ov.src.width - (ov.src_rect.x + ov.src_rect.w);
+							ov.src_rect.x = tmp;
+							overlay_src_swap(&ov);
+						}
 						flag = MDP_ROT_NOP;
-						ov->src.width = ctx->ov.src.width;
-						ov->src.height = ctx->ov.src.height;
-						ov->src_rect.w = ctx->ov.src.width;
-						ov->src_rect.h = ctx->ov.src.height;
+						ov.user_data[0] = flag;
 						break;
 
 					case OVERLAY_TRANSFORM_ROT_90:
-					   	ov->src.width = ctx->ov.src.height;
-					   	ov->src.height = ctx->ov.src.width;
-					   	ov->src_rect.w = ctx->ov.src.height;
-					   	ov->src_rect.h = ctx->ov.src.width;
-					   	flag = MDP_ROT_90;
+						if (ov.user_data[0] == 0) {
+							tmp = ov.src_rect.x;
+							ov.src_rect.x = ov.src.height - (ov.src_rect.y + ov.src_rect.h);
+							ov.src_rect.y = tmp;
+							overlay_src_swap(&ov);
+						}
+						flag = MDP_ROT_90;
+						ov.user_data[0] = flag;
 					   	break;
 					default: return -EINVAL;
 				}
 
 				result = overlay_setRot(obj->getRotFd(), &ctx->rotInfo, flag);
 
-				if (ioctl(obj->getOvFd(), MSMFB_OVERLAY_SET, ov))
+				if (ioctl(obj->getOvFd(), MSMFB_OVERLAY_SET, &ov))
 					LOGE("%s: MSMFB_OVERLAY_SET error!", __FUNCTION__);
 #endif
 				result = -EINVAL;
@@ -665,6 +696,48 @@ public:
 		return 0;
 	}
 
+	static int overlay_setCrop(struct overlay_data_device_t *dev, uint32_t x,
+                           uint32_t y, uint32_t w, uint32_t h)
+	{
+		int tmp;
+		struct mdp_overlay ov;
+		struct overlay_data_context_t* ctx = (struct overlay_data_context_t*)dev;
+
+		ov.id = ctx->od.id;
+		if (ioctl(ctx->mFD, MSMFB_OVERLAY_GET, &ov)) {
+			LOGE("%s: MSMFB_OVERLAY_GET error!", __FUNCTION__);
+			return -errno;
+		}
+
+		if (ov.user_data[0] == MDP_ROT_90) {
+			tmp = x;
+			x = ov.src.width - (y + h);
+			y = tmp;
+
+			tmp = w;
+			w = h;
+			h = tmp;
+		}
+
+	    if ((ov.src_rect.x == x) &&
+		(ov.src_rect.y == y) &&
+		(ov.src_rect.w == w) &&
+		(ov.src_rect.h == h))
+	            return 0;
+
+	    ov.src_rect.x = x;
+	    ov.src_rect.y = y;
+	    ov.src_rect.w = w;
+	    ov.src_rect.h = h;
+
+            if (ioctl(ctx->mFD, MSMFB_OVERLAY_SET, &ov)) {
+                    LOGE("%s: MSMFB_OVERLAY_SET error!", __FUNCTION__);
+		    return -errno;
+            }
+
+            return 0;
+	}
+
 	void *overlay_getBufferAddress(struct overlay_data_device_t *dev,
 								   overlay_buffer_t buffer)
 	{
@@ -748,6 +821,7 @@ public:
 			dev->device.common.close = overlay_data_close;
 
 			dev->device.initialize = overlay_initialize;
+	                dev->device.setCrop = overlay_setCrop;
 			dev->device.dequeueBuffer = overlay_dequeueBuffer;
 			dev->device.queueBuffer = overlay_queueBuffer;
 			dev->device.setFd = overlay_setFd;
