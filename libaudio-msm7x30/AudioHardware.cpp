@@ -478,7 +478,8 @@ status_t AudioHardware::setMicMute_nosync(bool state)
 {
     if (mMicMute != state) {
         mMicMute = state;
-        return doAudioRouteOrMute(SND_DEVICE_CURRENT);
+        LOGE("setMicMute_nosync calling voice mute with the mMicMute %d", mMicMute);
+        msm_set_voice_tx_mute(mMicMute);
     }
     return NO_ERROR;
 }
@@ -697,7 +698,8 @@ static status_t do_route_audio_rpc(uint32_t device,
     }
     else if(device == SND_DEVICE_SPEAKER) {
         new_rx_device = DEVICE_SPEAKER_RX;
-        new_tx_device = DEVICE_SPEAKER_TX;
+        new_tx_device = cur_tx; //temp fix until speaker_mono_tx is enabled
+        //new_tx_device = DEVICE_SPEAKER_TX;
         LOGV("In SPEAKER");
     }
     else if(device == SND_DEVICE_HEADSET) {
@@ -751,7 +753,7 @@ static status_t do_route_audio_rpc(uint32_t device,
         LOGV("In BT_HCO");
     }
 
-    LOGV("new_rx = %d,new_tx = %d",new_rx_device,new_tx_device);
+    LOGE("New Rx %d and Tx %d device", DEV_ID(new_rx_device), DEV_ID(new_tx_device));
 
     if (ear_mute == false && !isStreamOn(VOICE_CALL)) {
         LOGV("Going to enable RX/TX device for voice stream");
@@ -760,6 +762,18 @@ static status_t do_route_audio_rpc(uint32_t device,
                 msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX),0);
                // msm_en_device(device_list[cur_rx].dev_id,0);
             }
+
+            // Routing Voice
+            if ( (new_rx_device != INVALID_DEVICE) && (new_tx_device != INVALID_DEVICE))
+            {
+                LOGE("Starting voice on Rx %d and Tx %d device", DEV_ID(new_rx_device), DEV_ID(new_tx_device));
+                msm_route_voice(DEV_ID(new_rx_device),DEV_ID(new_tx_device), 1);
+            }
+            else
+            {
+                return -1;
+            }
+
 
             if(cur_rx != INVALID_DEVICE /*&& cur_rx != new_rx_device*/) {
                 if(msm_en_device(DEV_ID(cur_rx),0)) {
@@ -773,11 +787,6 @@ static status_t do_route_audio_rpc(uint32_t device,
                     return 0;
                 }
             }
-            //Route voice
-            if(msm_route_voice(DEV_ID(new_rx_device),DEV_ID(new_tx_device),1)) {
-                LOGE("msm_route_voice failed rx = %d,tx = %d,errno = %d",DEV_ID(new_rx_device),DEV_ID(new_tx_device),errno);
-                return 0;
-              }
 
            //Enable RX device
             if(new_rx_device != INVALID_DEVICE /*&& new_rx_device != cur_rx*/ && msm_en_device(DEV_ID(new_rx_device), 1)) {
@@ -789,6 +798,11 @@ static status_t do_route_audio_rpc(uint32_t device,
                 LOGE("msm_en_device[%d],1 failed errno = %d",DEV_ID(new_tx_device),errno);
                 return 0;
             }
+
+            // start Voice call
+            LOGE("Starting voice call and UnMuting the call");
+            msm_start_voice();
+            msm_set_voice_tx_mute(0);
             cur_rx = new_rx_device;
             cur_tx = new_tx_device;
             addToTable(0,cur_rx,cur_tx,VOICE_CALL,true);
@@ -799,6 +813,11 @@ static status_t do_route_audio_rpc(uint32_t device,
         temp = getNodeByStreamType(VOICE_CALL);
         if(temp == NULL)
             return 0;
+
+        // Ending voice call
+        LOGE("Ending Voice call");
+        msm_end_voice();
+
         if(temp->dev_id != INVALID_DEVICE && temp->dev_id_tx != INVALID_DEVICE) {
             msm_en_device(DEV_ID(temp->dev_id),0);
             msm_en_device(DEV_ID(temp->dev_id_tx),0);
@@ -856,21 +875,43 @@ static status_t do_route_audio_rpc(uint32_t device,
         }
         else if(isStreamOnAndActive(VOICE_CALL)) { //TODO INCALL +
                 //device switch during voice call + FM_RADIO +  Basically iterate thtrough node and update device ids . Do special handling
-                LOGV("Device switch during voice call old devs = %d,%d and new devs = %d,%d",
+            LOGE("Device switch during voice call old Rx, Tx = %d,%d and new Rx, Tx = %d,%d",
                         DEV_ID(cur_rx),DEV_ID(cur_tx),DEV_ID(new_rx_device),DEV_ID(new_tx_device));
             temp = getNodeByStreamType(VOICE_CALL);
             if(temp == NULL)
                 return 0;
+
+            // Routing Voice to new device
+            msm_route_voice(DEV_ID(new_rx_device),DEV_ID(new_tx_device),1);
+
             if(temp->dev_id != INVALID_DEVICE && temp->dev_id_tx != INVALID_DEVICE) {
-                msm_route_voice(DEV_ID(temp->dev_id),DEV_ID(temp->dev_id_tx),0);
-                msm_en_device(DEV_ID(temp->dev_id),0);
-                msm_en_device(DEV_ID(temp->dev_id_tx),0);
+
+                // Temporary work around for Speaker mode. The driver is not
+                // supporting Speaker Rx and Handset Tx combo
+                if (new_rx_device != temp->dev_id)
+                {
+                   msm_en_device(DEV_ID(temp->dev_id),0);
+                }
+
+                if (new_tx_device != temp->dev_id_tx)
+                {
+                   msm_en_device(DEV_ID(temp->dev_id_tx),0);
+                }
              }
+
              if(new_rx_device != INVALID_DEVICE && new_tx_device != INVALID_DEVICE) {
-                 msm_route_voice(DEV_ID(new_rx_device),DEV_ID(new_tx_device),1);
-                 msm_en_device(DEV_ID(new_rx_device),1);
-                 msm_en_device(DEV_ID(new_tx_device),1);
+
+                 if (new_rx_device != temp->dev_id)
+                 {
+                    msm_en_device(DEV_ID(new_rx_device),1);
+                 }
+
+                 if (new_tx_device != temp->dev_id_tx)
+                 {
+                     msm_en_device(DEV_ID(new_tx_device),1);
+                 }
              }
+
              cur_rx = new_rx_device;
              cur_tx = new_tx_device;
              modifyActiveDeviceOfStream(VOICE_CALL,cur_rx,cur_tx);
