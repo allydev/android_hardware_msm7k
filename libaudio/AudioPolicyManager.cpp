@@ -1620,7 +1620,7 @@ status_t AudioPolicyManager::checkAndSetVolume(int stream, int index, audio_io_h
 
     float volume = computeVolume(stream, index, output, device || force);
     // do not set volume if the float value did not change
-    if (volume != mOutputs.valueFor(output)->mCurVolume[stream]) {
+    if ((volume != mOutputs.valueFor(output)->mCurVolume[stream]) || (stream == AudioSystem::VOICE_CALL)) {
         mOutputs.valueFor(output)->mCurVolume[stream] = volume;
         LOGV("setStreamVolume() for output %d stream %d, volume %f, delay %d", output, stream, volume, delayMs);
         if (stream == AudioSystem::VOICE_CALL ||
