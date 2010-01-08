@@ -17,7 +17,7 @@
 
 #include <math.h>
 
-#define LOG_NDEBUG 0
+//#define LOG_NDEBUG 0
 #define LOG_TAG "AudioHardwareMSM7X30"
 #include <utils/Log.h>
 #include <utils/String8.h>
@@ -91,6 +91,8 @@ static uint32_t DEVICE_TTY_VCO_RX = 13; //tty_vco_rx
 static uint32_t DEVICE_TTY_VCO_TX = 14; //tty_vco_tx
 static uint32_t DEVICE_TTY_HCO_RX = 15; //tty_hco_rx
 static uint32_t DEVICE_TTY_HCO_TX = 16; //tty_hco_tx
+static uint32_t DEVICE_BT_SCO_RX = 17; //tty_hco_tx
+static uint32_t DEVICE_BT_SCO_TX = 18; //tty_hco_tx
 
 
 int dev_cnt = 0;
@@ -311,6 +313,10 @@ AudioHardware::AudioHardware() :
                 index = DEVICE_TTY_HCO_RX;
             else if(strcmp((char* )name[i],"tty_hco_tx") == 0)
                 index = DEVICE_TTY_HCO_TX;
+            else if(strcmp((char* )name[i],"bt_sco_rx") == 0)
+                index = DEVICE_BT_SCO_RX;
+            else if(strcmp((char* )name[i],"bt_sco_tx") == 0)
+                index = DEVICE_BT_SCO_TX;
             else
                 continue;
             LOGV("index = %d",index);
@@ -739,6 +745,11 @@ static status_t do_route_audio_rpc(uint32_t device,
         new_tx_device = DEVICE_TTY_HCO_TX;
         LOGV("In TTY_HCO");
     }
+    else if(device == SND_DEVICE_BT) {
+        new_rx_device = DEVICE_BT_SCO_RX;
+        new_tx_device = DEVICE_BT_SCO_TX;
+        LOGV("In BT_HCO");
+    }
 
     LOGV("new_rx = %d,new_tx = %d",new_rx_device,new_tx_device);
 
@@ -785,30 +796,63 @@ static status_t do_route_audio_rpc(uint32_t device,
     }
     else if (ear_mute == true && isStreamOnAndActive(VOICE_CALL)) {
         LOGV("Going to disable RX/TX device during end of voice call");
-            if(isStreamOnAndActive(PCM_PLAY)) {
-                LOGV("PCM playback on.Not disabling device");
+        temp = getNodeByStreamType(VOICE_CALL);
+        if(temp == NULL)
+            return 0;
+        if(temp->dev_id != INVALID_DEVICE && temp->dev_id_tx != INVALID_DEVICE) {
+            msm_en_device(DEV_ID(temp->dev_id),0);
+            msm_en_device(DEV_ID(temp->dev_id_tx),0);
+        }
+        if(isStreamOnAndActive(PCM_PLAY)) {
+            temp = getNodeByStreamType(PCM_PLAY);
+            if(temp == NULL)
+                return 0;
+            if(new_rx_device != INVALID_DEVICE) {
+                if(msm_en_device(DEV_ID(new_rx_device),1)) {
+                     LOGV("msm_en_device[%d],0 failed errno = %d",DEV_ID(new_rx_device),errno);
+                 }
+                 if(msm_route_stream(PCM_PLAY,temp->dec_id,DEV_ID(temp->dev_id),0)) {
+                     LOGV("msm_route_stream(PCM_PLAY,%d,%d,0) failed",temp->dec_id,DEV_ID(temp->dev_id));
+                 }
+                 if(msm_route_stream(PCM_PLAY,temp->dec_id,DEV_ID(new_rx_device),1)) {
+                     LOGV("msm_route_stream(PCM_PLAY,%d,%d,1) failed",temp->dec_id,DEV_ID(new_rx_device));
+                 }
+             }
+             modifyActiveDeviceOfStream(PCM_PLAY,new_rx_device,INVALID_DEVICE);
+        }
+        if(isStreamOnAndActive(PCM_REC)) {
+            //device switch during pcm recording
+            temp = getNodeByStreamType(PCM_REC);
+            if(temp == NULL)
+                 return 0;
+            if(new_tx_device != INVALID_DEVICE) {
+                if(msm_en_device(DEV_ID(new_tx_device),1)) {
+                LOGV("msm_en_device[%d],1 failed errno = %d",DEV_ID(new_tx_device),errno);
+                }
             }
-            else {
-                temp = getNodeByStreamType(VOICE_CALL);
-                if(temp == NULL)
-                    return 0;
-                if(temp->dev_id != INVALID_DEVICE && temp->dev_id_tx != INVALID_DEVICE) {
-                    msm_en_device(DEV_ID(temp->dev_id),0);
-                    msm_en_device(DEV_ID(temp->dev_id_tx),0);
+            if(temp->dev_id != INVALID_DEVICE) {
+                if(msm_route_stream(PCM_REC,temp->dec_id,DEV_ID(temp->dev_id),0)) {
+                    LOGV("msm_route_stream(PCM_PLAY,%d,%d,0) failed",temp->dec_id,DEV_ID(temp->dev_id));
                 }
-                if(isStreamOnAndInactive(FM_RADIO)) {
-                    msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX),1);
-                    cur_tx = INVALID_DEVICE;
-                    cur_rx = DEVICE_FMRADIO_HANDSET_RX;
-                    modifyActiveStateOfStream(FM_RADIO,true);
-                }
-                else if(new_rx_device != INVALID_DEVICE && new_tx_device != INVALID_DEVICE) {
-                        cur_rx = new_rx_device;
-                        cur_tx = new_tx_device;
-                }
-
             }
-            deleteFromTable(VOICE_CALL);
+            if(new_tx_device != INVALID_DEVICE ) {
+                if(msm_route_stream(PCM_REC,temp->dec_id,DEV_ID(new_tx_device),1)) {
+                    LOGV("msm_route_stream(PCM_REC,%d,%d,1) failed",temp->dec_id,DEV_ID(new_rx_device));
+                }
+            }
+            modifyActiveDeviceOfStream(PCM_REC,new_tx_device,INVALID_DEVICE);
+         }
+        if(isStreamOnAndInactive(FM_RADIO)) {
+            msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX),1);
+            cur_tx = INVALID_DEVICE;
+            cur_rx = DEVICE_FMRADIO_HANDSET_RX;
+            modifyActiveStateOfStream(FM_RADIO,true);
+        }
+        if(new_rx_device != INVALID_DEVICE && new_tx_device != INVALID_DEVICE) {
+            cur_rx = new_rx_device;
+            cur_tx = new_tx_device;
+        }
+        deleteFromTable(VOICE_CALL);
         }
         else if(isStreamOnAndActive(VOICE_CALL)) { //TODO INCALL +
                 //device switch during voice call + FM_RADIO +  Basically iterate thtrough node and update device ids . Do special handling
@@ -830,6 +874,41 @@ static status_t do_route_audio_rpc(uint32_t device,
              cur_rx = new_rx_device;
              cur_tx = new_tx_device;
              modifyActiveDeviceOfStream(VOICE_CALL,cur_rx,cur_tx);
+             if(isStreamOnAndActive(PCM_PLAY)) {
+                 //device switch during pcm playback
+                 LOGV("device switch during pcm play old dev = %d,new dev = %d",DEV_ID(cur_rx),DEV_ID(new_rx_device));
+                 temp = getNodeByStreamType(PCM_PLAY);
+                 if(temp == NULL)
+                     return 0;
+                 if(temp->dev_id != INVALID_DEVICE) {
+                     if(msm_route_stream(PCM_PLAY,temp->dec_id,DEV_ID(temp->dev_id),0)) {
+                         LOGV("msm_route_stream(PCM_PLAY,%d,%d,0) failed",temp->dec_id,DEV_ID(temp->dev_id));
+                     }
+                 }
+                 if(new_rx_device != INVALID_DEVICE ) {
+                     if(msm_route_stream(PCM_PLAY,temp->dec_id,DEV_ID(new_rx_device),1)) {
+                         LOGV("msm_route_stream(PCM_PLAY,%d,%d,1) failed",temp->dec_id,DEV_ID(new_rx_device));
+                     }
+                 }
+                 modifyActiveDeviceOfStream(PCM_PLAY,new_rx_device,INVALID_DEVICE);
+             }
+             if(isStreamOnAndActive(PCM_REC)) {
+                 //device switch during pcm recording
+                 temp = getNodeByStreamType(PCM_REC);
+                 if(temp == NULL)
+                     return 0;
+                 if(temp->dev_id != INVALID_DEVICE) {
+                     if(msm_route_stream(PCM_REC,temp->dec_id,DEV_ID(temp->dev_id),0)) {
+                         LOGV("msm_route_stream(PCM_PLAY,%d,%d,0) failed",temp->dec_id,DEV_ID(temp->dev_id));
+                     }
+                 }
+                 if(new_tx_device != INVALID_DEVICE ) {
+                     if(msm_route_stream(PCM_REC,temp->dec_id,DEV_ID(new_tx_device),1)) {
+                         LOGV("msm_route_stream(PCM_REC,%d,%d,1) failed",temp->dec_id,DEV_ID(new_rx_device));
+                     }
+                 }
+                 modifyActiveDeviceOfStream(PCM_REC,new_tx_device,INVALID_DEVICE);
+             }
         }
         else if(fmState == false && isStreamOnAndActive(FM_RADIO)) {
         LOGV("Disable FM");
@@ -876,8 +955,9 @@ static status_t do_route_audio_rpc(uint32_t device,
                      LOGV("msm_route_stream(PCM_PLAY,%d,%d,1) failed",temp->dec_id,DEV_ID(new_rx_device));
                  }
              }
-             modifyActiveDeviceOfStream(PCM_PLAY,new_rx_device,0);
+             modifyActiveDeviceOfStream(PCM_PLAY,new_rx_device,INVALID_DEVICE);
              cur_rx = new_rx_device ;
+             cur_tx = new_tx_device ;
         }
         else if(isStreamOnAndActive(PCM_REC)) {
             //device switch during pcm recording
@@ -902,6 +982,7 @@ static status_t do_route_audio_rpc(uint32_t device,
              }
              modifyActiveDeviceOfStream(PCM_REC,new_tx_device,INVALID_DEVICE);
              cur_tx = new_tx_device ;
+             cur_rx = new_rx_device ;
         }
         else if(new_rx_device != INVALID_DEVICE || new_tx_device != INVALID_DEVICE) {
             LOGE("simple device switch ");
@@ -911,14 +992,6 @@ static status_t do_route_audio_rpc(uint32_t device,
             }
              if(cur_tx != INVALID_DEVICE && msm_en_device(DEV_ID(cur_tx),0)) {
                 LOGE("msm_en_device[%d],0 failed errno = %d",DEV_ID(cur_tx),errno);
-                return 0;
-            }
-             if(new_rx_device != INVALID_DEVICE && msm_en_device(DEV_ID(new_rx_device),1)) {
-                LOGE("msm_en_device[%d],1 failed errno = %d",DEV_ID(new_rx_device),errno);
-                return 0;
-            }
-             if(new_tx_device != INVALID_DEVICE && msm_en_device(DEV_ID(new_tx_device),1)) {
-                LOGE("msm_en_device[%d],1 failed errno = %d",DEV_ID(new_tx_device),errno);
                 return 0;
             }
             cur_rx = new_rx_device;
@@ -1191,11 +1264,6 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
         }
         mFd = status;
 
-        if(msm_en_device(DEV_ID(cur_tx), 1)) {
-            LOGE("msm_en_device failed for device cur_tx %d", cur_tx);
-            return 0;
-        }
-
         if(msm_en_device(DEV_ID(cur_rx), 1)) {
             LOGE("msm_en_device failed for device cur_rx %d", cur_rx);
             return 0;
@@ -1296,13 +1364,7 @@ status_t AudioHardware::AudioStreamOutMSM72xx::standby()
         return -1;
     }
     deleteFromTable(PCM_PLAY);
-
     if(!getNodeByStreamType(VOICE_CALL)) {
-        if(msm_en_device(DEV_ID(cur_tx), 0)) {
-            LOGE("Disabling device failed for cur_tx %d", cur_tx);
-            return 0;
-        }
-
         if(msm_en_device(DEV_ID(cur_rx), 0)) {
             LOGE("Disabling device failed for cur_rx %d", cur_rx);
             return 0;
@@ -1811,23 +1873,23 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
         if (status != NO_ERROR) {
             return -1;
         }
+        if(ioctl(mFd, AUDIO_GET_SESSION_ID, &dec_id)) {
+            LOGE("AUDIO_GET_SESSION_ID failed*********");
+            return -1;
+        }
+        LOGV("dec_id = %d,cur_tx= %d",dec_id,cur_tx);
+        if(cur_tx == INVALID_DEVICE)
+            cur_tx = DEVICE_HANDSET_TX;
+        if(msm_en_device(DEV_ID(cur_tx), 1)) {
+            LOGE("msm_en_device failed");
+            return -1;
+        }
+        if(msm_route_stream(PCM_REC, dec_id, DEV_ID(cur_tx), 1)) {
+            LOGE("msm_route_stream failed");
+            return -1;
+        }
+        addToTable(dec_id,cur_tx,INVALID_DEVICE,PCM_REC,true);
     }
-    if(ioctl(mFd, AUDIO_GET_SESSION_ID, &dec_id)) {
-        LOGE("AUDIO_GET_SESSION_ID failed*********");
-        return 0;
-    }
-    LOGV("dec_id = %d\n",dec_id);
-    if(cur_tx == INVALID_DEVICE)
-        cur_tx = DEVICE_HANDSET_TX;
-    if(msm_en_device(DEV_ID(cur_tx), 1)) {
-        LOGE("msm_en_device failed");
-        return 0;
-    }
-    if(msm_route_stream(PCM_REC, dec_id, DEV_ID(cur_tx), 1)) {
-        LOGE("msm_route_stream failed");
-        return 0;
-    }
-    addToTable(dec_id,cur_tx,INVALID_DEVICE,PCM_REC,true);
 
     if (mState < AUDIO_INPUT_STARTED) {
         if (ioctl(mFd, AUDIO_START, 0)) {
@@ -1957,6 +2019,12 @@ status_t AudioHardware::AudioStreamInMSM72xx::standby()
     }
     LOGV("Disable device");
     deleteFromTable(PCM_REC);
+    if(!getNodeByStreamType(VOICE_CALL)) {
+        if(msm_en_device(DEV_ID(cur_tx), 0)) {
+            LOGE("Disabling device failed for cur_tx %d", cur_tx);
+            return 0;
+        }
+    }
     return NO_ERROR;
 }
 
