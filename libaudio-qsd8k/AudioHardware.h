@@ -42,6 +42,8 @@ namespace android {
 #define ADSP_AUDIO_DEVICE_ID_BT_SCO_MIC		0x1081518
 #define ADSP_AUDIO_DEVICE_ID_TTY_HEADSET_MIC	0x108151b
 #define ADSP_AUDIO_DEVICE_ID_I2S_MIC		0x1089bf3
+#define ADSP_AUDIO_DEVICE_ID_HANDSET_DUAL_MIC     0x108f9c3
+#define ADSP_AUDIO_DEVICE_ID_SPKR_PHONE_DUAL_MIC  0x108f9c5
 
 /* Special loopback pseudo device to be paired with an RX device */
 /* with usage ADSP_AUDIO_DEVICE_USAGE_MIXED_PCM_LOOPBACK */
@@ -77,6 +79,8 @@ namespace android {
 #define FM_HEADSET                 ADSP_AUDIO_DEVICE_ID_HEADSET_SPKR_STEREO
 #define FM_SPKR	                   ADSP_AUDIO_DEVICE_ID_SPKR_PHONE_MONO
 #define SPKR_PHONE_HEADSET_STEREO  ADSP_AUDIO_DEVICE_ID_SPKR_PHONE_MONO_W_MONO_HEADSET
+#define HANDSET_DUALMIC            ADSP_AUDIO_DEVICE_ID_HANDSET_DUAL_MIC
+#define SPKR_DUALMIC               ADSP_AUDIO_DEVICE_ID_SPKR_PHONE_DUAL_MIC
 
 #define ACDB_ID_EXT_MIC_REC 307
 #define ACDB_ID_HEADSET_PLAYBACK 407
@@ -126,6 +130,13 @@ struct eqalizer {
 struct rx_iir_filter {
     uint16_t num_bands;
     uint16_t iir_params[48];
+};
+
+enum tty_modes {
+    TTY_OFF = 0,
+    TTY_VCO = 1,
+    TTY_HCO = 2,
+    TTY_FULL = 3
 };
 
 #define CODEC_TYPE_PCM 0
@@ -295,6 +306,8 @@ private:
             msm_bt_endpoint *mBTEndpoints;
             int mNumBTEndpoints;
             int mCurSndDevice;
+            bool        mDualMicEnabled;
+            int         mTtyMode;
 
      friend class AudioStreamInMSM72xx;
             Mutex       mLock;
