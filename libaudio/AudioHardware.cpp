@@ -64,8 +64,11 @@ static struct tx_iir tx_iir_cfg[9];
 static struct ns ns_cfg[9];
 static struct tx_agc tx_agc_cfg[9];
 
+#define PCM_OUT_DEVICE "/dev/msm_pcm_out"
+#define PCM_IN_DEVICE "/dev/msm_pcm_in"
 #define PCM_CTL_DEVICE "/dev/msm_pcm_ctl"
 #define PREPROC_CTL_DEVICE "/dev/msm_preproc_ctl"
+#define VOICE_MEMO_DEVICE "/dev/msm_voicememo"
 
 static uint32_t SND_DEVICE_CURRENT=-1;
 static uint32_t SND_DEVICE_HANDSET=-1;
@@ -81,10 +84,6 @@ static uint32_t SND_DEVICE_TTY_HCO=-1;
 static uint32_t SND_DEVICE_TTY_VCO=-1;
 static uint32_t SND_DEVICE_CARKIT=-1;
 static uint32_t SND_DEVICE_FM_SPEAKER=-1;
-#define PCM_OUT_DEVICE "/dev/msm_pcm_out"
-#define PCM_IN_DEVICE "/dev/msm_pcm_in"
-#define PCM_CTL_DEVICE "/dev/msm_pcm_ctl"
-#define VOICE_MEMO_DEVICE "/dev/msm_voicememo"
 static uint32_t SND_DEVICE_FM_HEADSET=-1;
 static uint32_t SND_DEVICE_NO_MIC_HEADSET=-1;
 // ----------------------------------------------------------------------------
@@ -423,11 +422,6 @@ int check_and_set_audpp_parameters(char *buf, int size)
     uint16_t denominator[4];
     uint16_t shift[2];
 
-    fd = open(PCM_CTL_DEVICE, O_RDWR);
-    if (fd < 0) {
-        LOGE("Cannot open PCM Ctl device");
-        return -EPERM;
-    }
     if ((buf[0] == 'A') && ((buf[1] == '1') || (buf[1] == '2') || (buf[1] == '3'))) {
         /* IIR filter */
         if(buf[1] == '1') device_id=0;
@@ -774,7 +768,6 @@ int check_and_set_audpp_parameters(char *buf, int size)
             goto token_err;
         }
     }
-    close(fd);
     return 0;
 
 token_err:
@@ -877,7 +870,6 @@ static int msm72xx_enable_audpp(uint16_t enable_mask, uint32_t device)
        if (ioctl(fd, AUDIO_SET_MBADRC, &mbadrc_cfg[device_id]) < 0)
         {
             LOGE("set mbadrc filter error");
-            return -EIO;
         }
     }
     else if (adrc_filter_exists[device_id])
@@ -898,7 +890,6 @@ static int msm72xx_enable_audpp(uint16_t enable_mask, uint32_t device)
             if (ioctl(fd, AUDIO_SET_ADRC, &adrc_cfg[device_id]) < 0)
             {
                 LOGE("set adrc filter error.");
-                return -EIO;
             }
         }
     }
@@ -910,7 +901,6 @@ static int msm72xx_enable_audpp(uint16_t enable_mask, uint32_t device)
 	LOGI("Setting EQ Filter");
         if (ioctl(fd, AUDIO_SET_EQ, &eqalizer[device_id]) < 0) {
             LOGE("set Equalizer error.");
-            return -EIO;
         }
     }
 
@@ -933,7 +923,6 @@ static int msm72xx_enable_audpp(uint16_t enable_mask, uint32_t device)
          if (ioctl(fd, AUDIO_SET_RX_IIR, &iir_cfg[device_id]) < 0)
         {
             LOGE("set rx iir filter error.");
-            return -EIO;
         }
     }
 
@@ -1809,7 +1798,6 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         if (ioctl(fd, AUDIO_SET_AGC, &tx_agc_cfg[audpre_index]) < 0)
         {
             LOGE("set AGC filter error.");
-            return -EIO;
         }
 
          /* Setting NS Params */
@@ -1824,7 +1812,6 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         if (ioctl(fd, AUDIO_SET_NS, &ns_cfg[audpre_index]) < 0)
         {
             LOGE("set NS filter error.");
-            return -EIO;
         }
 
         /* Setting TX_IIR Params */
@@ -1837,15 +1824,14 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         if (ioctl(fd, AUDIO_SET_TX_IIR, &tx_iir_cfg[audpre_index]) < 0)
         {
            LOGE("set TX IIR filter error.");
-           return -EIO;
         }
 
          /*Setting AUDPRE_ENABLE*/
         if (ioctl(fd, AUDIO_ENABLE_AUDPRE, &enable_mask) < 0)
         {
            LOGE("set AUDPRE_ENABLE error.");
-           return -EIO;
         }
+	close(fd);
     }
 
     return NO_ERROR;
