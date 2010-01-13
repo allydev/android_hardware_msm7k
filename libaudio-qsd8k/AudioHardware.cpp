@@ -42,6 +42,11 @@
 
 #define LOG_SND_RPC 0  // Set to 1 to log sound RPC's
 #define TX_PATH (1)
+#define EVRC_DEVICE_IN "/dev/msm_evrc_in"
+#define QCELP_DEVICE_IN "/dev/msm_qcelp_in"
+#define AAC_DEVICE_IN "/dev/msm_aac_in"
+#define EVRC_FRAME_SIZE 23
+#define QCELP_FRAME_SIZE 35
 
 static const uint32_t SND_DEVICE_CURRENT = 256;
 static const uint32_t SND_DEVICE_HANDSET = 0;
@@ -369,7 +374,10 @@ static unsigned calculate_audpre_table_index(unsigned index)
 }
 size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int channelCount)
 {
-    if (format != AudioSystem::PCM_16_BIT) {
+    if ((format != AudioSystem::PCM_16_BIT) &&
+        (format != AudioSystem::EVRC) &&
+         (format != AudioSystem::QCELP) &&
+         (format != AudioSystem::AAC)){
         LOGW("getInputBufferSize bad format: %d", format);
         return 0;
     }
@@ -377,7 +385,13 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
         LOGW("getInputBufferSize bad channel count: %d", channelCount);
         return 0;
     }
-
+    if (format == AudioSystem::EVRC)
+       return 1150*channelCount;
+    else if (format == AudioSystem::QCELP)
+       return 1050*channelCount;
+    else if (format == AudioSystem::AAC)
+       return 2048;
+    else
     return AUDIO_HW_IN_BUFFERSIZE*channelCount;
 }
 
@@ -1125,10 +1139,23 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         AudioHardware* hw, uint32_t devices, int *pFormat, uint32_t *pChannels, uint32_t *pRate,
         AudioSystem::audio_in_acoustics acoustic_flags)
 {
-    if (pFormat == 0 || *pFormat != AUDIO_HW_IN_FORMAT) {
+    status_t status = NO_ERROR;
+
+    if ((pFormat == 0) ||
+        ((*pFormat != AUDIO_HW_IN_FORMAT) &&
+        (*pFormat != AudioSystem::EVRC) &&
+        (*pFormat != AudioSystem::QCELP) &&
+        (*pFormat != AudioSystem::AAC)))
+    {
         *pFormat = AUDIO_HW_IN_FORMAT;
         return BAD_VALUE;
     }
+
+    if((*pFormat == AudioSystem::AAC) && (*pChannels & (AudioSystem::CHANNEL_IN_VOICE_DNLINK |  AudioSystem::CHANNEL_IN_VOICE_UPLINK))) {
+        LOGE("voice call recording in AAC format does not support");
+        return BAD_VALUE;
+    }
+
     if (pRate == 0) {
         return BAD_VALUE;
     }
@@ -1150,7 +1177,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         LOGE("Audio record already open");
         return -EPERM;
     }
-
+    if(*pFormat == AUDIO_HW_IN_FORMAT)
+    {
     // open audio input device
     status_t status = ::open("/dev/msm_pcm_in", O_RDWR);
     if (status < 0) {
@@ -1204,6 +1232,113 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
     mChannels = *pChannels;
     mSampleRate = config.sample_rate;
     mBufferSize = config.buffer_size;
+    }
+    else if (*pFormat == AudioSystem::EVRC)
+    {
+          LOGI("Recording format: EVRC");
+          // open evrc input device
+          status = ::open(EVRC_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open evrc device for read");
+              goto Error;
+          }
+          mFd = status;
+          mDevices = devices;
+          mChannels = *pChannels;
+          mSampleRate =8000;
+          mFormat = *pFormat;
+          mBufferSize = 1150;
+          struct msm_audio_evrc_enc_config evrc_enc_cfg;
+
+          if (ioctl(mFd, AUDIO_GET_EVRC_ENC_CONFIG, &evrc_enc_cfg))
+          {
+            LOGE("Error: AUDIO_GET_EVRC_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config cdma_rate is %d", evrc_enc_cfg.cdma_rate);
+          LOGV("The Config min_bit_rate is %d", evrc_enc_cfg.min_bit_rate);
+          LOGV("The Config max_bit_rate is %d", evrc_enc_cfg.max_bit_rate);
+
+          evrc_enc_cfg.min_bit_rate = 1; //CDMA Eighth rate
+          evrc_enc_cfg.max_bit_rate = 4; //CDMA Full rate
+
+          if (ioctl(mFd, AUDIO_SET_EVRC_ENC_CONFIG, &evrc_enc_cfg))
+          {
+            LOGE("Error: AUDIO_SET_EVRC_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+    }
+    else if (*pFormat == AudioSystem::QCELP)
+    {
+          LOGI("Recording format: QCELP");
+          // open qcelp input device
+          status = ::open(QCELP_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open qcelp device for read");
+              goto Error;
+          }
+          mFd = status;
+          mDevices = devices;
+          mChannels = *pChannels;
+          mSampleRate =8000;
+          mFormat = *pFormat;
+          mBufferSize = 1050;
+          struct msm_audio_qcelp_enc_config qcelp_enc_cfg;
+
+          if (ioctl(mFd, AUDIO_GET_QCELP_ENC_CONFIG, &qcelp_enc_cfg))
+          {
+            LOGE("Error: AUDIO_GET_QCELP_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config cdma_rate is %d", qcelp_enc_cfg.cdma_rate);
+          LOGV("The Config min_bit_rate is %d", qcelp_enc_cfg.min_bit_rate);
+          LOGV("The Config max_bit_rate is %d", qcelp_enc_cfg.max_bit_rate);
+
+          qcelp_enc_cfg.min_bit_rate = 1; //CDMA Eighth rate
+          qcelp_enc_cfg.max_bit_rate = 4; //CDMA Full rate
+
+          if (ioctl(mFd, AUDIO_SET_QCELP_ENC_CONFIG, &qcelp_enc_cfg))
+          {
+            LOGE("Error: AUDIO_SET_QCELP_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+    }
+    else if(*pFormat == AudioSystem::AAC)
+    {
+        // open AAC input device
+        status = ::open(AAC_DEVICE_IN, O_RDWR);
+            if (status < 0) {
+                LOGE("Cannot open AAC input  device for read");
+                goto Error;
+            }
+            mFd = status;
+
+         /* Config param */
+         struct msm_audio_aac_enc_config config;
+         if(ioctl(mFd, AUDIO_GET_AAC_ENC_CONFIG, &config))
+         {
+                LOGE(" Error getting buf config param AUDIO_GET_CONFIG \n");
+                goto  Error;
+         }
+
+        LOGV("The Config Sample rate is %d", config.sample_rate);
+
+        mDevices = devices;
+        mChannels = *pChannels;
+        mSampleRate = *pRate;
+        mBufferSize = 2048;
+        mFormat = *pFormat;
+
+        config.sample_rate = *pRate;
+        config.stream_format = AUDIO_AAC_FORMAT_RAW;
+
+        if (ioctl(mFd, AUDIO_SET_AAC_ENC_CONFIG, &config)) {
+            LOGE(" Error in setting config of msm_pcm_in device \n");
+			goto Error;
+        }
+    }
 
     //mHardware->setMicMute_nosync(false);
     mState = AUDIO_INPUT_OPENED;
@@ -1240,10 +1375,14 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
     if (!mHardware) return -1;
 
     size_t count = bytes;
+    size_t  aac_framesize= bytes;
     uint8_t* p = static_cast<uint8_t*>(buffer);
+    uint32_t* recogPtr = (uint32_t *)p;
+    uint16_t* frameCountPtr;
+    uint16_t* frameSizePtr;
 
     if (mState < AUDIO_INPUT_OPENED) {
-        AudioHardware *hw = mHardware; 
+        AudioHardware *hw = mHardware;
 		hw->mLock.lock(); 
 		status_t status = set(hw, mDevices, &mFormat, &mChannels, &mSampleRate, mAcoustics); 
 		hw->mLock.unlock(); 
@@ -1265,17 +1404,94 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
         mHardware->updateACDB();
     }
 
-    while (count) {
-        ssize_t bytesRead = ::read(mFd, buffer, count);
-        if (bytesRead >= 0) {
-            count -= bytesRead;
-            p += bytesRead;
-        } else {
-            if (errno != EAGAIN) return bytesRead;
-            mRetryCount++;
-            LOGW("EAGAIN - retrying");
+    if (mFormat == AudioSystem::AAC) {
+       if (bytes < 512) {
+        LOGE("Error, the buffer size passed is not compatible %d", bytes);
+        return -1;
+       }
+    }
+    bytes = 0;
+    if (mFormat == AudioSystem::AAC)
+    {
+        *((uint32_t*)recogPtr) = 0x51434F4D ;// ('Q','C','O', 'M') Number to identify format as AAC by higher layers
+        recogPtr++;
+        frameCountPtr = (uint16_t*)recogPtr;
+        *frameCountPtr = 0;
+        p += 3*sizeof(uint16_t);
+        count -= 3*sizeof(uint16_t);
+    }
+    if (mFormat == AudioSystem::AAC)
+    {
+	while (count > 0) {
+          frameSizePtr = (uint16_t *)p;
+          p += sizeof(uint16_t);
+          if(!(count > 2)) break;
+          count -= sizeof(uint16_t);
+          if (count < 512) break;
+          ssize_t bytesRead = ::read(mFd, p, 512);// AAC has fixed frame size of 512 bytes
+              if (bytesRead > 0) {
+                  LOGV("Number of Bytes read = %d", bytesRead);
+                  count -= bytesRead;
+                  p += bytesRead;
+                  bytes += bytesRead;
+                  LOGV("Total Number of Bytes read = %d", bytes);
+		  *frameSizePtr =  bytesRead;
+		  (*frameCountPtr)++;
+	      }
         }
     }
+    if(mFormat == AUDIO_HW_IN_FORMAT)
+    {
+        while (count) {
+            ssize_t bytesRead = ::read(mFd, buffer, count);
+            if (bytesRead >= 0) {
+                count -= bytesRead;
+                p += bytesRead;
+            }
+            else
+            {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+    }
+    else if (mFormat == AudioSystem::EVRC)
+    {
+       while (count) {
+            ssize_t bytesRead = ::read(mFd, buffer, EVRC_FRAME_SIZE);
+            if (bytesRead >= 0) {
+                p += EVRC_FRAME_SIZE;
+                count -= EVRC_FRAME_SIZE;
+                bytes += EVRC_FRAME_SIZE;
+                buffer += EVRC_FRAME_SIZE;
+            }
+            else {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+    }
+    else if (mFormat == AudioSystem::QCELP)
+    {
+       while (count) {
+            ssize_t bytesRead = ::read(mFd, buffer, QCELP_FRAME_SIZE);
+            if (bytesRead >= 0) {
+                p += QCELP_FRAME_SIZE;
+                count -= QCELP_FRAME_SIZE;
+                bytes += QCELP_FRAME_SIZE;
+                buffer += QCELP_FRAME_SIZE;
+            }
+            else {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+    }
+    if (mFormat == AudioSystem::AAC)
+        return aac_framesize;
     return bytes;
 }
 
