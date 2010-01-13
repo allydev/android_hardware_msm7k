@@ -753,7 +753,10 @@ static status_t do_route_audio_rpc(uint32_t device,
         LOGV("In BT_HCO");
     }
 
-    LOGE("New Rx %d and Tx %d device", DEV_ID(new_rx_device), DEV_ID(new_tx_device));
+    if(new_rx_device != INVALID_DEVICE)
+        LOGE("new_rx = %d",new_rx_device);
+    if(new_tx_device != INVALID_DEVICE)
+        LOGE("new_tx = %d",new_tx_device);
 
     if (ear_mute == false && !isStreamOn(VOICE_CALL)) {
         LOGV("Going to enable RX/TX device for voice stream");
@@ -952,12 +955,10 @@ static status_t do_route_audio_rpc(uint32_t device,
              }
         }
         else if(fmState == false && isStreamOnAndActive(FM_RADIO)) {
-        LOGV("Disable FM");
-                //disable FM RADIO
+            //disable FM RADIO
+            LOGV("Disable FM");
             msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX),0);
-            cur_tx = INVALID_DEVICE;
-            cur_rx = INVALID_DEVICE;
-             deleteFromTable(FM_RADIO);
+            deleteFromTable(FM_RADIO);
         }
         else if(fmState == true && isStreamOnAndInactive(FM_RADIO)) {
              LOGV("Enable FM which was in dormant mode");
@@ -968,7 +969,7 @@ static status_t do_route_audio_rpc(uint32_t device,
             LOGV("Going to enable fm radio");
             if(cur_rx != INVALID_DEVICE)
                 msm_en_device(DEV_ID(cur_rx),0);
-            if(msm_en_device(DEV_ID(new_rx_device), 1)) {
+            if(msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX), 1)) {
                 LOGE("msm_en_device[%d],1 failed errno = %d",DEV_ID(new_rx_device),errno);
                 return 0;
             }
@@ -1002,6 +1003,7 @@ static status_t do_route_audio_rpc(uint32_t device,
         }
         else if(isStreamOnAndActive(PCM_REC)) {
             //device switch during pcm recording
+            LOGV("device switch during pcm recording");
              temp = getNodeByStreamType(PCM_REC);
                  if(temp == NULL)
                      return 0;
