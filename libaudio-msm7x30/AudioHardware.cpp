@@ -62,7 +62,7 @@ static uint32_t SND_DEVICE_HEADSET= 2;
 static uint32_t SND_DEVICE_FM_HANDSET = 3;
 static uint32_t SND_DEVICE_FM_SPEAKER= 4;
 static uint32_t SND_DEVICE_FM_HEADSET= 5;
-static uint32_t SND_DEVICE_BT=-1;
+static uint32_t SND_DEVICE_BT= 6;
 static uint32_t SND_DEVICE_BT_EC_OFF=-1;
 static uint32_t SND_DEVICE_HEADSET_AND_SPEAKER=-1;
 static uint32_t SND_DEVICE_IN_S_SADC_OUT_HANDSET=9;
@@ -965,7 +965,7 @@ static status_t do_route_audio_rpc(uint32_t device,
              modifyActiveStateOfStream(FM_RADIO,true);
              msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX),1);
         }
-        else if(fmState == true && new_rx_device == DEVICE_FMRADIO_HANDSET_RX) {
+        else if(fmState == true && (new_rx_device == DEVICE_FMRADIO_HANDSET_RX || new_rx_device == DEVICE_FMRADIO_HEADSET_RX)) {
             LOGV("Going to enable fm radio");
             if(cur_rx != INVALID_DEVICE)
                 msm_en_device(DEV_ID(cur_rx),0);
@@ -1051,6 +1051,9 @@ static status_t do_route_audio_rpc(uint32_t device,
 // always call with mutex held
 status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
 {
+// BT acoustics is not supported. This might be used by OEMs. Hence commenting
+// the code and not removing it.
+#if 0
     if (device == (uint32_t)SND_DEVICE_BT || device == (uint32_t)SND_DEVICE_CARKIT) {
         if (mBluetoothId) {
             device = mBluetoothId;
@@ -1058,6 +1061,8 @@ status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
             device = SND_DEVICE_BT_EC_OFF;
         }
     }
+#endif
+
     LOGV("doAudioRouteOrMute() device %x, mMode %d, mMicMute %d", device, mMode, mMicMute);
     return do_route_audio_rpc(device,
                               mMode != AudioSystem::MODE_IN_CALL, mMicMute);
