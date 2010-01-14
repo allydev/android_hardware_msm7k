@@ -655,12 +655,15 @@ status_t AudioHardware::setVoiceVolume(float v)
         v = 1.0;
     }
 
-    int vol = lrint(v * 7.0);
+    int vol = lrint(v * 100.0);
     LOGD("setVoiceVolume(%f)\n", v);
-    LOGI("Setting in-call volume to %d (available range is 0 to 5)\n", vol);
+    LOGI("Setting in-call volume to %d (available range is 0 to 100)\n", vol);
 
-    Mutex::Autolock lock(mLock);
-    set_volume_rpc(SND_DEVICE_CURRENT, SND_METHOD_VOICE, vol);
+    if(msm_set_voice_rx_vol(vol)) {
+        LOGE("msm_set_voice_rx_vol(%d) failed errno = %d",vol,errno);
+        return -1;
+    }
+    LOGV("msm_set_voice_rx_vol(%d) succeeded",vol);
     return NO_ERROR;
 }
 
