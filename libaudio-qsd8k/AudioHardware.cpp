@@ -1447,6 +1447,7 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
             if (bytesRead >= 0) {
                 count -= bytesRead;
                 p += bytesRead;
+                bytes += bytesRead;
             }
             else
             {
