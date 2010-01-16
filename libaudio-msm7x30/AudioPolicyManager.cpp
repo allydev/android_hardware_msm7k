@@ -1584,9 +1584,9 @@ status_t AudioPolicyManager::checkAndSetVolume(int stream, int index, audio_io_h
             } else if (stream == AudioSystem::BLUETOOTH_SCO) {
                 voiceVolume = 1.0;
             }
-//            if (voiceVolume >= 0 && output == mHardwareOutput) {
-//                mpClientInterface->setVoiceVolume(voiceVolume, delayMs);
-//            }
+            if (voiceVolume >= 0 && output == mHardwareOutput) {
+                mpClientInterface->setVoiceVolume(voiceVolume, delayMs);
+            }
         }
         mpClientInterface->setStreamVolume((AudioSystem::stream_type)stream, volume, output, delayMs);
     }
