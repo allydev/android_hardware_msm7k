@@ -35,7 +35,7 @@
 #include <linux/msm_mdp.h>
 #include <linux/msm_rotator.h>
 
-//#define USE_MSM_ROTATOR
+#define USE_MSM_ROTATOR
 /*****************************************************************************/
 
 struct overlay_control_context_t {
