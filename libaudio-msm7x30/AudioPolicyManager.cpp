@@ -20,6 +20,7 @@
 #include <utils/Log.h>
 #include "AudioPolicyManager.h"
 #include <media/mediarecorder.h>
+#include <fcntl.h>
 
 namespace android {
 
@@ -1216,15 +1217,43 @@ extern "C" void destroyAudioPolicyManager(AudioPolicyInterface *interface)
 AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterface)
 : mPhoneState(AudioSystem::MODE_NORMAL), mRingerMode(0), mMusicStopTime(0)
 {
+    int fd = -1;
+    bool bIsDeviceSurf = false;
+    char device_name[10];
+
     mpClientInterface = clientInterface;
 
     for (int i = 0; i < AudioSystem::NUM_FORCE_USE; i++) {
         mForceUse[i] = AudioSystem::FORCE_NONE;
     }
 
-    // devices available by default are speaker, ear piece and microphone
-    mAvailableOutputDevices = AudioSystem::DEVICE_OUT_EARPIECE |
-                        AudioSystem::DEVICE_OUT_SPEAKER;
+    // Check if the device is surf / FFA
+    fd = ::open("/sys/devices/system/soc/soc0/hw_platform", O_RDONLY);
+
+    if (fd >= 0)
+    {
+        // read the data from file
+        size_t bytesRead = ::read(fd, device_name, 10);
+        device_name[bytesRead] = '\0';
+
+        if (strncmp(device_name, "Surf", (bytesRead - 1)) == 0)
+        {
+            LOGE("Hardware is %s", device_name);
+            bIsDeviceSurf = true;
+        }
+        close(fd);
+        fd = -1;
+    }
+
+    uint32_t defaultDevice = (uint32_t) AudioSystem::DEVICE_OUT_EARPIECE;
+    mAvailableOutputDevices = AudioSystem::DEVICE_OUT_EARPIECE;
+
+    if (!bIsDeviceSurf)
+    {
+        // This is FFA
+        mAvailableOutputDevices |= AudioSystem::DEVICE_OUT_SPEAKER;
+        defaultDevice = (uint32_t) AudioSystem::DEVICE_OUT_SPEAKER;
+    }
     mAvailableInputDevices = AudioSystem::DEVICE_IN_BUILTIN_MIC;
 
     mA2dpDeviceAddress = String8("");
@@ -1232,7 +1261,7 @@ AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterfa
 
     // open hardware output
     AudioOutputDescriptor *outputDesc = new AudioOutputDescriptor();
-    outputDesc->mDevice = (uint32_t)AudioSystem::DEVICE_OUT_EARPIECE; // Setting the default device to earpiece
+    outputDesc->mDevice = (uint32_t)defaultDevice;
     mHardwareOutput = mpClientInterface->openOutput(&outputDesc->mDevice,
                                     &outputDesc->mSamplingRate,
                                     &outputDesc->mFormat,
@@ -1247,7 +1276,7 @@ AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterfa
         mOutputs.add(mHardwareOutput, outputDesc);
         // Force routing during bootup, to ensure the default devices are set as
         // expected by policymanager.
-        setOutputDevice(mHardwareOutput, (uint32_t)AudioSystem::DEVICE_OUT_EARPIECE, true);
+        setOutputDevice(mHardwareOutput, defaultDevice, true);
     }
 
     mA2dpOutput = 0;
@@ -1403,9 +1432,12 @@ uint32_t AudioPolicyManager::getDeviceForStrategy(routing_strategy strategy)
                                 if (device2 == 0) {
                                     device2 = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET;
                                     if (device2 == 0) {
-                                        device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_EARPIECE;
+                                        device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_SPEAKER;
                                         if (device == 0) {
-                                            LOGE("getDeviceForStrategy() speaker device not found");
+                                           device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_EARPIECE;
+                                           if (device == 0) {
+                                              LOGE("getDeviceForStrategy() earpiece device not found");
+                                           }
                                         }
                                     }
                                 }
