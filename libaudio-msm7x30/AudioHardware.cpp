@@ -330,17 +330,6 @@ AudioHardware::AudioHardware() :
             LOGV("class ID = %d,capablity = %d for device %d",device_list[index].class_id,device_list[index].capability,device_list[index].dev_id);
         }
         mInit = true;
-        cur_rx = DEVICE_HANDSET_RX;
-        cur_tx = DEVICE_HANDSET_TX;
-        if(msm_en_device(device_list[cur_rx].dev_id, 1)) {
-            LOGE("msm_en_device failed");
-            return;
-        }
-        if(msm_en_device(device_list[cur_tx].dev_id, 1)) {
-            LOGE("msm_en_device failed");
-            return;
-        }
-
 }
 
 AudioHardware::~AudioHardware()
@@ -757,9 +746,9 @@ static status_t do_route_audio_rpc(uint32_t device,
     }
 
     if(new_rx_device != INVALID_DEVICE)
-        LOGE("new_rx = %d",new_rx_device);
+        LOGE("new_rx = %d", DEV_ID(new_rx_device));
     if(new_tx_device != INVALID_DEVICE)
-        LOGE("new_tx = %d",new_tx_device);
+        LOGE("new_tx = %d", DEV_ID(new_tx_device));
 
     if (ear_mute == false && !isStreamOn(VOICE_CALL)) {
         LOGV("Going to enable RX/TX device for voice stream");

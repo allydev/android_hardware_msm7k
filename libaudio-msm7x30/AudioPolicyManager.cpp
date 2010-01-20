@@ -1245,7 +1245,9 @@ AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterfa
                 outputDesc->mSamplingRate, outputDesc->mFormat, outputDesc->mChannels);
     } else {
         mOutputs.add(mHardwareOutput, outputDesc);
-        setOutputDevice(mHardwareOutput, (uint32_t)AudioSystem::DEVICE_OUT_EARPIECE, false);
+        // Force routing during bootup, to ensure the default devices are set as
+        // expected by policymanager.
+        setOutputDevice(mHardwareOutput, (uint32_t)AudioSystem::DEVICE_OUT_EARPIECE, true);
     }
 
     mA2dpOutput = 0;
