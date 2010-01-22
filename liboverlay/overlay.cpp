@@ -36,6 +36,8 @@
 #include <linux/msm_rotator.h>
 
 #define USE_MSM_ROTATOR
+
+#define CLR_KEY 0x0F070F
 /*****************************************************************************/
 
 struct overlay_control_context_t {
@@ -208,8 +210,10 @@ public:
 			mHandle.ov.dst_rect.h = dH;
 
 		mHandle.ov.z_order = 0;
-		mHandle.ov.alpha = 0xb2;
-		mHandle.ov.transp_mask = 0x0;
+               mHandle.ov.alpha = 0xf0;
+               mHandle.ov.transp_mask = (((CLR_KEY>>16)&0xf8)<<8) |
+                                        (((CLR_KEY>>8)&0xfc)<<3) |
+                                        ((CLR_KEY&0xf8)>>3);
 		mHandle.ov.flags = 0;
 		mHandle.ov.is_fg = 0;
 
