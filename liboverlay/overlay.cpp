@@ -414,6 +414,15 @@ public:
 		overlay_object * obj = static_cast<overlay_object *>(overlay);
 		struct mdp_overlay ov;
 
+		struct overlay_hw_info * ovHw;
+		ovHw = obj->getOvHwInfo();
+
+               if ((x < 0)
+                   || (y < 0)
+                   || ((x + w) > ovHw->w)
+                   || ((y + h) > ovHw->h)) {
+                   return -1;
+               }
 		ov.id = obj->getHwOvId();
 		if (ioctl(obj->getOvFd(), MSMFB_OVERLAY_GET, &ov)) {
 			LOGE("%s: MSMFB_OVERLAY_GET error!", __FUNCTION__);
