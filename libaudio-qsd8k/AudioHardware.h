@@ -149,7 +149,6 @@ enum tty_modes {
 
 #define AUDIO_HW_IN_SAMPLERATE 8000                 // Default audio input sample rate
 #define AUDIO_HW_IN_CHANNELS (AudioSystem::CHANNEL_IN_MONO) // Default audio input channel mask
-#define AUDIO_HW_IN_BUFFERSIZE 4096                 // Default audio input buffer size
 #define AUDIO_KERNEL_PCM_IN_BUFFERSIZE 4096
 #define AUDIO_HW_IN_FORMAT (AudioSystem::PCM_16_BIT)  // Default audio input sample format
 // ----------------------------------------------------------------------------
@@ -215,7 +214,6 @@ private:
     status_t    set_mRecordState(bool onoff);
     status_t    get_snd_dev();
     status_t    doRouting(AudioStreamInMSM72xx *input);
-    status_t    updateACDB();
     status_t    updateBT();
 
     class AudioStreamOutMSM72xx : public AudioStreamOut {

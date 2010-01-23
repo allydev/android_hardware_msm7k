@@ -1080,7 +1080,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                     (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
                     LOGI("Routing audio to Wired Headset and Speaker\n");
                     sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-                    audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+                    audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
                 } else {
                     LOGI("Routing audio to Wired Headset\n");
                     sndDevice = SND_DEVICE_HEADSET;
@@ -1089,7 +1089,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                 if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                     LOGI("Routing audio to Speakerphone\n");
                     sndDevice = SND_DEVICE_SPEAKER;
-                    audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+                    audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
                 } else {
                     LOGI("Routing audio to Handset\n");
                     sndDevice = SND_DEVICE_HANDSET;
@@ -1107,7 +1107,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
             }
         }
         if ((mTtyMode != TTY_OFF) && (mMode == AudioSystem::MODE_IN_CALL) &&
-                (outputDevices & (AudioSystem::DEVICE_OUT_TTY | AudioSystem::DEVICE_OUT_WIRED_HEADSET))) {
+                (outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET)) {
             if (mTtyMode == TTY_FULL) {
                 LOGI("Routing audio to TTY FULL Mode\n");
                 sndDevice = SND_DEVICE_TTY_FULL;
@@ -1129,25 +1129,12 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                    (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
             LOGI("Routing audio to Wired Headset and Speaker\n");
             sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
-        } else if (outputDevices & AudioSystem::DEVICE_OUT_FM_SPEAKER) {
-            LOGI("Routing audio to FM Speakerphone (%d,%x)\n", mMode, outputDevices);
-            sndDevice = SND_DEVICE_FM_SPEAKER;
-            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_DISABLE);
-        } else if (outputDevices & AudioSystem::DEVICE_OUT_FM_HEADPHONE) {
-            if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
-                LOGI("Routing audio to FM Headset and Speaker (%d,%x)\n", mMode, outputDevices);
-                sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-                audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
-            } else {
-                LOGI("Routing audio to FM Headset (%d,%x)\n", mMode, outputDevices);
-                sndDevice = SND_DEVICE_FM_HEADSET;
-            }
+            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
         } else if (outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADPHONE) {
             if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                 LOGI("Routing audio to No microphone Wired Headset and Speaker (%d,%x)\n", mMode, outputDevices);
                 sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-                audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+                audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
             } else {
                 LOGI("Routing audio to No microphone Wired Headset (%d,%x)\n", mMode, outputDevices);
                 sndDevice = SND_DEVICE_NO_MIC_HEADSET;
@@ -1155,15 +1142,17 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
         } else if (outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) {
             LOGI("Routing audio to Wired Headset\n");
             sndDevice = SND_DEVICE_HEADSET;
+            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
         } else if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
             LOGI("Routing audio to Speakerphone\n");
             sndDevice = SND_DEVICE_SPEAKER;
-            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
+            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
         } else if(fmState == true) {
             sndDevice = SND_DEVICE_FM_HANDSET;
         } else {
             LOGI("Routing audio to Handset\n");
             sndDevice = SND_DEVICE_HANDSET;
+            audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
         }
     }
 

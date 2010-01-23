@@ -65,8 +65,9 @@ static const uint32_t SND_DEVICE_TTY_HCO = 7;
 static const uint32_t SND_DEVICE_HANDSET_BACK_MIC = 20;
 static const uint32_t SND_DEVICE_SPEAKER_BACK_MIC = 21;
 static const uint32_t SND_DEVICE_NO_MIC_HEADSET_BACK_MIC = 28;
-static const uint32_t SND_DEVICE_HANDSET_DUAL_MIC = 30;
+static const uint32_t SND_DEVICE_HANDSET_DUAL_MIC = 32;
 static const uint32_t SND_DEVICE_SPEAKER_DUAL_MIC = 31;
+static const uint32_t SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC = 30;
 namespace android {
 static int old_pathid = -1;
 static int new_pathid = -1;
@@ -392,7 +393,7 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
     else if (format == AudioSystem::AAC)
        return 2048;
     else
-    return AUDIO_HW_IN_BUFFERSIZE*channelCount;
+    return AUDIO_KERNEL_PCM_IN_BUFFERSIZE*channelCount;
 }
 
 static status_t set_volume_rpc(uint32_t volume)
@@ -444,7 +445,7 @@ status_t AudioHardware::setMasterVolume(float v)
 
 static status_t do_route_audio_dev_ctrl(uint32_t device, bool inCall)
 {
-    int out_device = 0, mic_device = 0;
+    uint32_t out_device = 0, mic_device = 0;
     int fd = 0;
 
     if (device == SND_DEVICE_CURRENT)
@@ -473,6 +474,10 @@ static status_t do_route_audio_dev_ctrl(uint32_t device, bool inCall)
            out_device = SPKR_PHONE_HEADSET_STEREO;
            mic_device = HEADSET_MIC;
            LOGD("Stereo Headset + Speaker");
+    } else if (device == SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC) {
+           out_device = SPKR_PHONE_HEADSET_STEREO;
+           mic_device = SPKR_PHONE_MIC;
+           LOGD("Stereo Headset + Speaker and back mic");
     } else if (device == SND_DEVICE_NO_MIC_HEADSET) {
            out_device = HEADSET_SPKR_STEREO;
            mic_device = HANDSET_MIC;
@@ -585,6 +590,8 @@ status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
             device = SND_DEVICE_BT_EC_OFF;
         }
     }
+
+
     return do_route_audio_dev_ctrl(device, mMode == AudioSystem::MODE_IN_CALL);
 }
 
@@ -610,98 +617,6 @@ status_t AudioHardware::get_snd_dev(void)
     return mCurSndDevice;
 }
 
-// always call with mutex held
-status_t AudioHardware::updateACDB(void)
-{
-
-    int fd = 0;
-    int acdb_id = -1;
-    uint32_t id[2];
-
-    fd = open("/dev/msm_audio_ctl", O_RDWR);
-    if (fd < 0)        {
-       LOGE("Cannot open msm_audio_ctl");
-       return -1;
-    }
-
-    if (mMode == AudioSystem::MODE_IN_CALL) {
-        LOGD("skip update ACDB due to in-call");
-        close(fd);
-        return 0;
-    }
-
-    //update RX acdb parameters.
-    if (!checkOutputStandby()) {
-        switch (mCurSndDevice) {
-            case SND_DEVICE_HEADSET:
-            case SND_DEVICE_NO_MIC_HEADSET:
-            case SND_DEVICE_NO_MIC_HEADSET_BACK_MIC:
-            case SND_DEVICE_FM_HEADSET:
-                acdb_id = ACDB_ID_HEADSET_PLAYBACK;
-                break;
-            case SND_DEVICE_SPEAKER:
-            case SND_DEVICE_FM_SPEAKER:
-            case SND_DEVICE_SPEAKER_BACK_MIC:
-                acdb_id = ACDB_ID_SPKR_PLAYBACK;
-                break;
-            case SND_DEVICE_HEADSET_AND_SPEAKER:
-                acdb_id = ACDB_ID_HEADSET_RINGTONE_PLAYBACK;
-                break;
-            default:
-                break;
-        }
-    }
-    if (acdb_id != -1) {
-        id[0] = acdb_id;
-        id[1] = curr_out_device;
-        if (ioctl(fd, AUDIO_UPDATE_ACDB, &id)) {
-           LOGE("Cannot update RX ACDB %d", acdb_id);
-           close(fd);
-           return -1;
-        } else
-           LOGD("update RX ACDB %d success", acdb_id);
-    }
-
-    //update TX acdb parameters.
-    acdb_id = -1;
-    if (mRecordState) {
-        switch (mCurSndDevice) {
-            case SND_DEVICE_HEADSET:
-            case SND_DEVICE_FM_HEADSET:
-            case SND_DEVICE_FM_SPEAKER:
-                acdb_id = ACDB_ID_EXT_MIC_REC;
-                break;
-            case SND_DEVICE_HANDSET:
-            case SND_DEVICE_NO_MIC_HEADSET:
-            case SND_DEVICE_SPEAKER:
-                /*if (vr_mode_enabled == 0) {
-                    acdb_id = ACDB_ID_INT_MIC_REC;
-                } else {
-                    acdb_id = ACDB_ID_INT_MIC_VR;
-                }
-                break;*/
-            case SND_DEVICE_SPEAKER_BACK_MIC:
-            case SND_DEVICE_NO_MIC_HEADSET_BACK_MIC:
-            case SND_DEVICE_HANDSET_BACK_MIC:
-                acdb_id = ACDB_ID_CAMCORDER;
-                break;
-            default:
-                break;
-        }
-    }
-    if (acdb_id != -1) {
-        id[0] = acdb_id;
-        id[1] = curr_mic_device;
-        if (ioctl(fd, AUDIO_UPDATE_ACDB, &id)) {
-           LOGE("Cannot update TX ACDB %d", acdb_id);
-           close(fd);
-           return -1;
-        } else
-           LOGD("update TX ACDB %d success", acdb_id);
-    }
-    close(fd);
-    return 0;
-}
 
 status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
 {
@@ -719,15 +634,19 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                 sndDevice = SND_DEVICE_BT;
             } else if (inputDevice & AudioSystem::DEVICE_IN_WIRED_HEADSET) {
                 if ((outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) &&
-                    (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
-                    LOGI("Routing audio to Wired Headset and Speaker\n");
-                    sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
+                        (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
+                            LOGI("Routing audio to Wired Headset and Speaker\n");
+                            sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
                 } else {
                     LOGI("Routing audio to Wired Headset\n");
                     sndDevice = SND_DEVICE_HEADSET;
                 }
             } else if (inputDevice & AudioSystem::DEVICE_IN_BACK_MIC) {
-                if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
+                if (outputDevices & (AudioSystem:: DEVICE_OUT_WIRED_HEADSET) &&
+                       (outputDevices & AudioSystem:: DEVICE_OUT_SPEAKER)) {
+                    LOGI("Routing audio to Wired Headset and Speaker with back mic\n");
+                    sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC;
+                } else if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                     LOGI("Routing audio to Speakerphone with back mic\n");
                     sndDevice = SND_DEVICE_SPEAKER_BACK_MIC;
                 } else if (outputDevices == AudioSystem::DEVICE_OUT_EARPIECE) {
@@ -757,12 +676,12 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
         if (outputDevices & (outputDevices - 1)) {
             if ((outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) == 0) {
                 LOGW("Hardware does not support requested route combination (%#X),"
-                     " picking closest possible route...", outputDevices);
+                        " picking closest possible route...", outputDevices);
             }
         }
 
         if ((mTtyMode != TTY_OFF) && (mMode == AudioSystem::MODE_IN_CALL) &&
-                (outputDevices & (AudioSystem::DEVICE_OUT_TTY | AudioSystem::DEVICE_OUT_WIRED_HEADSET))) {
+                (outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET)) {
             if (mTtyMode == TTY_FULL) {
                 LOGI("Routing audio to TTY FULL Mode\n");
                 sndDevice = SND_DEVICE_TTY_FULL;
@@ -781,20 +700,9 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
             LOGI("Routing audio to Bluetooth PCM\n");
             sndDevice = SND_DEVICE_CARKIT;
         } else if ((outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) &&
-                   (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
-            LOGI("Routing audio to Wired Headset and Speaker\n");
-            sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-        } else if (outputDevices & AudioSystem::DEVICE_OUT_FM_SPEAKER) {
-            LOGI("Routing audio to FM Speakerphone (%d,%x)\n", mMode, outputDevices);
-            sndDevice = SND_DEVICE_FM_SPEAKER;
-        } else if (outputDevices & AudioSystem::DEVICE_OUT_FM_HEADPHONE) {
-            if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
-                LOGI("Routing audio to FM Headset and Speaker (%d,%x)\n", mMode, outputDevices);
-                sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-            } else {
-                LOGI("Routing audio to FM Headset (%d,%x)\n", mMode, outputDevices);
-                sndDevice = SND_DEVICE_FM_HEADSET;
-            }
+                (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
+                    LOGI("Routing audio to Wired Headset and Speaker\n");
+                    sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
         } else if (outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADPHONE) {
             if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                 LOGI("Routing audio to No microphone Wired Headset and Speaker (%d,%x)\n", mMode, outputDevices);
@@ -990,8 +898,6 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
         LOGV("acquire wakelock");
         acquire_wake_lock(PARTIAL_WAKE_LOCK, kOutputWakelockStr);
         mStandby = false;
-        Mutex::Autolock lock(mHardware->mLock);
-        mHardware->updateACDB();
     }
 
     if (mPhonestate == AudioSystem::MODE_IN_CALL)
@@ -1130,7 +1036,7 @@ String8 AudioHardware::AudioStreamOutMSM72xx::getParameters(const String8& keys)
 AudioHardware::AudioStreamInMSM72xx::AudioStreamInMSM72xx() :
     mHardware(0), mFd(-1), mState(AUDIO_INPUT_CLOSED), mRetryCount(0),
     mFormat(AUDIO_HW_IN_FORMAT), mChannels(AUDIO_HW_IN_CHANNELS),
-    mSampleRate(AUDIO_HW_IN_SAMPLERATE), mBufferSize(AUDIO_HW_IN_BUFFERSIZE),
+    mSampleRate(AUDIO_HW_IN_SAMPLERATE), mBufferSize(AUDIO_KERNEL_PCM_IN_BUFFERSIZE),
     mAcoustics((AudioSystem::audio_in_acoustics)0), mDevices(0)
 {
 }
@@ -1400,8 +1306,6 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
         }
         LOGI("AUDIO_START: start kernel pcm_in driver.");
         mState = AUDIO_INPUT_STARTED;
-        Mutex::Autolock lock(mHardware->mLock);
-        mHardware->updateACDB();
     }
 
     if (mFormat == AudioSystem::AAC) {
@@ -1498,7 +1402,7 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
 
 status_t AudioHardware::AudioStreamInMSM72xx::standby()
 {
-        if (mHardware) {
+    if (mHardware) {
         mHardware->set_mRecordState(0);
     }
 
