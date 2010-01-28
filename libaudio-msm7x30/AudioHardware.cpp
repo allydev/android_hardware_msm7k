@@ -1125,6 +1125,8 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
         } else if (outputDevices & AudioSystem::DEVICE_OUT_BLUETOOTH_SCO_CARKIT) {
             LOGI("Routing audio to Bluetooth PCM\n");
             sndDevice = SND_DEVICE_CARKIT;
+        } else if(fmState == true) {
+            sndDevice = SND_DEVICE_FM_HANDSET;
         } else if ((outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) &&
                    (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
             LOGI("Routing audio to Wired Headset and Speaker\n");
@@ -1147,8 +1149,6 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
             LOGI("Routing audio to Speakerphone\n");
             sndDevice = SND_DEVICE_SPEAKER;
             audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
-        } else if(fmState == true) {
-            sndDevice = SND_DEVICE_FM_HANDSET;
         } else {
             LOGI("Routing audio to Handset\n");
             sndDevice = SND_DEVICE_HANDSET;
