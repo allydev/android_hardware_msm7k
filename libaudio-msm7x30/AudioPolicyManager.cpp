@@ -1215,7 +1215,7 @@ AudioPolicyManager::AudioPolicyManager(AudioPolicyClientInterface *clientInterfa
         size_t bytesRead = ::read(fd, device_name, 10);
         device_name[bytesRead] = '\0';
 
-        if (strncmp(device_name, "Surf", (bytesRead - 1)) == 0)
+        if (strncmp(device_name, "Surf", (bytesRead - 1)) == 0 || strncmp(device_name, "FFA", (bytesRead - 1)) == 0)
         {
             LOGE("Hardware is %s", device_name);
             bIsDeviceSurf = true;
