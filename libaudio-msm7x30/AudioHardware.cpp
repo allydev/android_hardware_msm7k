@@ -85,14 +85,10 @@ static uint32_t DEVICE_FMRADIO_HEADSET_RX= 7; //fmradio_headset_rx
 static uint32_t DEVICE_FMRADIO_SPEAKER_RX= 8; //fmradio_speaker_rx
 static uint32_t DEVICE_DUALMIC_HANDSET_TX = 9; //handset_dual_mic_endfire_tx
 static uint32_t DEVICE_DUALMIC_SPEAKER_TX = 10; //speaker_dual_mic_endfire_tx
-static uint32_t DEVICE_TTY_FULL_RX = 11; //tty_headset_mono_rx
-static uint32_t DEVICE_TTY_FULL_TX = 12; //tty_headset_mono_tx
-static uint32_t DEVICE_TTY_VCO_RX = 13; //tty_vco_rx
-static uint32_t DEVICE_TTY_VCO_TX = 14; //tty_vco_tx
-static uint32_t DEVICE_TTY_HCO_RX = 15; //tty_hco_rx
-static uint32_t DEVICE_TTY_HCO_TX = 16; //tty_hco_tx
-static uint32_t DEVICE_BT_SCO_RX = 17; //tty_hco_tx
-static uint32_t DEVICE_BT_SCO_TX = 18; //tty_hco_tx
+static uint32_t DEVICE_TTY_HEADSET_MONO_RX = 11; //tty_headset_mono_rx
+static uint32_t DEVICE_TTY_HEADSET_MONO_TX = 12; //tty_headset_mono_tx
+static uint32_t DEVICE_BT_SCO_RX = 17; //bt_sco_rx
+static uint32_t DEVICE_BT_SCO_TX = 18; //bt_sco_tx
 
 
 int dev_cnt = 0;
@@ -302,17 +298,9 @@ AudioHardware::AudioHardware() :
             else if(strcmp((char* )name[i],"speaker_dual_mic_endfire_tx") == 0)
                 index = DEVICE_DUALMIC_SPEAKER_TX;
             else if(strcmp((char* )name[i],"tty_headset_mono_rx") == 0)
-                index = DEVICE_TTY_FULL_RX;
+                index = DEVICE_TTY_HEADSET_MONO_RX;
             else if(strcmp((char* )name[i],"tty_headset_mono_tx") == 0)
-                index = DEVICE_TTY_FULL_TX;
-            else if(strcmp((char* )name[i],"tty_vco_tx") == 0)
-                index = DEVICE_TTY_VCO_TX;
-            else if(strcmp((char* )name[i],"tty_vco_rx") == 0)
-                index = DEVICE_TTY_VCO_RX;
-            else if(strcmp((char* )name[i],"tty_hco_rx") == 0)
-                index = DEVICE_TTY_HCO_RX;
-            else if(strcmp((char* )name[i],"tty_hco_tx") == 0)
-                index = DEVICE_TTY_HCO_TX;
+                index = DEVICE_TTY_HEADSET_MONO_TX;
             else if(strcmp((char* )name[i],"bt_sco_rx") == 0)
                 index = DEVICE_BT_SCO_RX;
             else if(strcmp((char* )name[i],"bt_sco_tx") == 0)
@@ -725,18 +713,18 @@ static status_t do_route_audio_rpc(uint32_t device,
         LOGV("In DUALMIC_SPEAKER");
     }
     else if(device == SND_DEVICE_TTY_FULL) {
-        new_rx_device = DEVICE_TTY_FULL_RX;
-        new_tx_device = DEVICE_TTY_FULL_TX;
+        new_rx_device = DEVICE_TTY_HEADSET_MONO_RX;
+        new_tx_device = DEVICE_TTY_HEADSET_MONO_TX;
         LOGV("In TTY_FULL");
     }
     else if(device == SND_DEVICE_TTY_VCO) {
-        new_rx_device = DEVICE_TTY_VCO_RX;
-        new_tx_device = DEVICE_TTY_VCO_TX;
+        new_rx_device = DEVICE_TTY_HEADSET_MONO_RX;
+        new_tx_device = DEVICE_HEADSET_TX;
         LOGV("In TTY_VCO");
     }
     else if(device == SND_DEVICE_TTY_HCO) {
-        new_rx_device = DEVICE_TTY_HCO_RX;
-        new_tx_device = DEVICE_TTY_HCO_TX;
+        new_rx_device = DEVICE_HEADSET_RX;
+        new_tx_device = DEVICE_TTY_HEADSET_MONO_TX;
         LOGV("In TTY_HCO");
     }
     else if(device == SND_DEVICE_BT) {
