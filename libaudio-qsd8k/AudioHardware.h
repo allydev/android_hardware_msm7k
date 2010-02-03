@@ -239,8 +239,6 @@ private:
         virtual status_t    setParameters(const String8& keyValuePairs);
         virtual String8     getParameters(const String8& keys);
                 uint32_t    devices() { return mDevices; }
-                void        setPhonestate(uint32_t mode) { mPhonestate = mode; }
-                void        closedecoder();
 
     private:
                 AudioHardware* mHardware;
@@ -249,7 +247,6 @@ private:
                 int         mRetryCount;
                 bool        mStandby;
                 uint32_t    mDevices;
-                uint32_t    mPhonestate;
     };
 
     class AudioStreamInMSM72xx : public AudioStreamIn {
