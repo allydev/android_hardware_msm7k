@@ -1166,7 +1166,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           LOGV("The Config min_bit_rate is %d", evrc_enc_cfg.min_bit_rate);
           LOGV("The Config max_bit_rate is %d", evrc_enc_cfg.max_bit_rate);
 
-          evrc_enc_cfg.min_bit_rate = 1; //CDMA Eighth rate
+          evrc_enc_cfg.min_bit_rate = 4; //CDMA Full rate
           evrc_enc_cfg.max_bit_rate = 4; //CDMA Full rate
 
           if (ioctl(mFd, AUDIO_SET_EVRC_ENC_CONFIG, &evrc_enc_cfg))
@@ -1202,7 +1202,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           LOGV("The Config min_bit_rate is %d", qcelp_enc_cfg.min_bit_rate);
           LOGV("The Config max_bit_rate is %d", qcelp_enc_cfg.max_bit_rate);
 
-          qcelp_enc_cfg.min_bit_rate = 1; //CDMA Eighth rate
+          qcelp_enc_cfg.min_bit_rate = 4; //CDMA Full rate
           qcelp_enc_cfg.max_bit_rate = 4; //CDMA Full rate
 
           if (ioctl(mFd, AUDIO_SET_QCELP_ENC_CONFIG, &qcelp_enc_cfg))
