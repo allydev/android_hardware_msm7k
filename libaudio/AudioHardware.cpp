@@ -1106,6 +1106,9 @@ static status_t do_route_audio_rpc(uint32_t device,
 // always call with mutex held
 status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
 {
+// BT acoustics is not supported. This might be used by OEMs. Hence commenting
+// the code and not removing it.
+#if 0
     if (device == (uint32_t)SND_DEVICE_BT || device == (uint32_t)SND_DEVICE_CARKIT) {
         if (mBluetoothId) {
             device = mBluetoothId;
@@ -1113,6 +1116,8 @@ status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
             device = SND_DEVICE_BT_EC_OFF;
         }
     }
+#endif
+
     LOGV("doAudioRouteOrMute() device %x, mMode %d, mMicMute %d", device, mMode, mMicMute);
     return do_route_audio_rpc(device,
                               mMode != AudioSystem::MODE_IN_CALL, mMicMute, m7xsnddriverfd);
