@@ -116,7 +116,6 @@ typedef struct device_table
 Device_table* device_list;
 
 static void amr_transcode(unsigned char *src, unsigned char *dst);
-bool fmState = false;
 
 enum STREAM_TYPES {
 PCM_PLAY=1,
@@ -124,6 +123,23 @@ PCM_REC,
 VOICE_CALL,
 FM_RADIO
 };
+
+enum FM_STATE {
+    FM_INVALID=1,
+    FM_OFF,
+    FM_ON
+};
+
+enum FM_DEVICE {
+    FM_INVALID_DEVICE,
+    FM_HANDSET,
+    FM_SPEAKER,
+    FM_HEADSET
+};
+
+FM_STATE fmState = FM_INVALID;
+FM_DEVICE fmDevice = FM_INVALID_DEVICE;
+
 #define DEV_ID(X) device_list[X].dev_id
 void addToTable(int decoder_id,int device_id,int device_id_tx,int stream_type,bool active) {
     Routing_table* temp_ptr;
@@ -239,7 +255,20 @@ void deleteFromTable(int Stream_type) {
 
 }
 
+int getFmDeviceID(int fmDevice) {
 
+    int fm_device = INVALID_DEVICE;
+    if(fmDevice == FM_HANDSET) {
+       fm_device = DEVICE_FMRADIO_HANDSET_RX;
+    }
+    else if (fmDevice == FM_SPEAKER) {
+       fm_device = DEVICE_FMRADIO_SPEAKER_RX;
+    }
+    else if(fmDevice == FM_HEADSET) {
+       fm_device = DEVICE_FMRADIO_HEADSET_RX;
+    }
+    return fm_device;
+}
 //
 // ----------------------------------------------------------------------------
 
@@ -476,7 +505,9 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
     const char BT_NAME_KEY[] = "bt_headset_name";
     const char BT_NREC_VALUE_ON[] = "on";
     const char FM_NAME_KEY[] = "FMRadioOn";
-    const char FM_VALUE_TRUE[] = "true";
+    const char FM_VALUE_HANDSET[] = "handset";
+    const char FM_VALUE_SPEAKER[] = "speaker";
+    const char FM_VALUE_HEADSET[] = "headset";
     const char FM_VALUE_FALSE[] = "false";
 
 
@@ -513,13 +544,26 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
     key = String8(FM_NAME_KEY);
     if(param.get(key,value) == NO_ERROR)
     {
-       if(value == FM_VALUE_TRUE && fmState == false) {
-           fmState = true;
+       if(value == FM_VALUE_HANDSET) {
+           fmState  = FM_ON;
+           fmDevice = FM_HANDSET;
            doRouting(NULL);
 
        }
-       else if(value == FM_VALUE_FALSE && fmState == true) {
-           fmState = false;
+       else if(value == FM_VALUE_SPEAKER) {
+           fmState  = FM_ON;
+           fmDevice = FM_SPEAKER;
+           doRouting(NULL);
+       }
+       if(value == FM_VALUE_HEADSET) {
+           fmState  = FM_ON;
+           fmDevice = FM_HEADSET;
+           doRouting(NULL);
+       }
+       else if(value == FM_VALUE_FALSE) {
+           fmState = FM_OFF;
+           // Need to provide some device id for FM routing to go through
+           fmDevice = FM_HANDSET;
            doRouting(NULL);
        }
     }
@@ -667,7 +711,7 @@ static status_t do_route_audio_rpc(uint32_t device,
     if(device == -1)
         return 0;
 
-    int new_rx_device = INVALID_DEVICE,new_tx_device = INVALID_DEVICE;
+    int new_rx_device = INVALID_DEVICE,new_tx_device = INVALID_DEVICE,fm_device = FM_INVALID;
     Routing_table* temp = NULL;
     LOGV("do_route_audio_rpc(%d, %d, %d)", device, ear_mute, mic_mute);
 
@@ -686,19 +730,13 @@ static status_t do_route_audio_rpc(uint32_t device,
         new_tx_device = DEVICE_HEADSET_TX;
         LOGV("In HEADSET");
     }
-    else if (device == SND_DEVICE_FM_HANDSET) {
-        new_rx_device = DEVICE_FMRADIO_HANDSET_RX;
-        new_tx_device = INVALID_DEVICE;
+    else if (device ==  DEVICE_FMRADIO_HANDSET_RX ) {
         LOGV("In FM HANDSET");
     }
-    else if(device == SND_DEVICE_FM_SPEAKER) {
-        new_rx_device = DEVICE_FMRADIO_SPEAKER_RX;
-        new_tx_device = INVALID_DEVICE;
+    else if(device == DEVICE_FMRADIO_SPEAKER_RX ) {
         LOGV("In FM SPEAKER");
     }
-    else if(device == SND_DEVICE_FM_HEADSET) {
-        new_rx_device = DEVICE_FMRADIO_HEADSET_RX;
-        new_tx_device = INVALID_DEVICE;
+    else if(device == DEVICE_FMRADIO_HEADSET_RX ) {
         LOGV("In FM HEADSET");
     }
     else if(device == SND_DEVICE_IN_S_SADC_OUT_HANDSET) {
@@ -741,8 +779,8 @@ static status_t do_route_audio_rpc(uint32_t device,
         LOGV("Going to enable RX/TX device for voice stream");
             if(isStreamOnAndActive(FM_RADIO)) {
                 modifyActiveStateOfStream(FM_RADIO,false);
-                msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX),0);
-               // msm_en_device(device_list[cur_rx].dev_id,0);
+                temp = getNodeByStreamType(FM_RADIO);
+                msm_en_device(DEV_ID(temp->dev_id),0);
             }
 
             // Routing Voice
@@ -948,26 +986,41 @@ static status_t do_route_audio_rpc(uint32_t device,
                  modifyActiveDeviceOfStream(PCM_REC,new_tx_device,INVALID_DEVICE);
              }
         }
-        else if(fmState == false && isStreamOnAndActive(FM_RADIO)) {
+        else if(fmState == FM_OFF && isStreamOnAndActive(FM_RADIO)) {
             //disable FM RADIO
             LOGV("Disable FM");
-            msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX),0);
+            temp = getNodeByStreamType(FM_RADIO);
+            if(temp == NULL)
+                return -1;
+
+            msm_en_device(DEV_ID(temp->dev_id),0);
             deleteFromTable(FM_RADIO);
+            fmState = FM_INVALID;
+            fmDevice = FM_INVALID_DEVICE;
         }
-        else if(fmState == true && isStreamOnAndInactive(FM_RADIO)) {
-             LOGV("Enable FM which was in dormant mode");
-             modifyActiveStateOfStream(FM_RADIO,true);
-             msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX),1);
+        else if(fmState == FM_ON && isStreamOnAndInactive(FM_RADIO)) {
+            LOGV("Enable FM which was in dormant mode");
+            temp = getNodeByStreamType(FM_RADIO);
+            if(temp == NULL)
+                return -1;
+            modifyActiveStateOfStream(FM_RADIO,true);
+            msm_en_device(DEV_ID(temp->dev_id),1);
         }
-        else if(fmState == true && (new_rx_device == DEVICE_FMRADIO_HANDSET_RX || new_rx_device == DEVICE_FMRADIO_HEADSET_RX)) {
+        else if(fmState == FM_ON &&  fmDevice != FM_INVALID_DEVICE) {
             LOGV("Going to enable fm radio");
             if(cur_rx != INVALID_DEVICE)
                 msm_en_device(DEV_ID(cur_rx),0);
-            if(msm_en_device(DEV_ID(DEVICE_FMRADIO_HANDSET_RX), 1)) {
-                LOGE("msm_en_device[%d],1 failed errno = %d",DEV_ID(new_rx_device),errno);
-                return 0;
+            fm_device = getFmDeviceID(fmDevice);
+            if(fm_device != INVALID_DEVICE) {
+               if(msm_en_device(DEV_ID(fm_device), 1)) {
+                    LOGE("msm_en_device[%d],1 failed errno = %d",DEV_ID(fm_device),errno);
+                    return 0;
+                }
+                addToTable(0,fm_device,INVALID_DEVICE,FM_RADIO,true);
             }
-            addToTable(0,DEVICE_FMRADIO_HANDSET_RX,INVALID_DEVICE,FM_RADIO,true);
+            //clear the fm routing info so that future routing to other devices
+            //are not affected
+            fmDevice = FM_INVALID_DEVICE;
         }
         else if(isStreamOnAndActive(PCM_PLAY)) {
             //device switch during pcm playback
@@ -1070,6 +1123,13 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
     int audProcess = (ADRC_DISABLE | EQ_DISABLE | RX_IIR_DISABLE);
     int sndDevice = -1;
 
+    // handle fm device routing separately
+    if(fmState != FM_INVALID && fmDevice != FM_INVALID_DEVICE) {
+        sndDevice = getFmDeviceID(fmDevice);
+        ret = doAudioRouteOrMute(sndDevice);
+        return ret;
+    }
+
     if (input != NULL) {
         uint32_t inputDevice = input->devices();
         LOGI("do input routing device %x\n", inputDevice);
@@ -1127,8 +1187,6 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
         } else if (outputDevices & AudioSystem::DEVICE_OUT_BLUETOOTH_SCO_CARKIT) {
             LOGI("Routing audio to Bluetooth PCM\n");
             sndDevice = SND_DEVICE_CARKIT;
-        } else if(fmState == true) {
-            sndDevice = SND_DEVICE_FM_HANDSET;
         } else if ((outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) &&
                    (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
             LOGI("Routing audio to Wired Headset and Speaker\n");
