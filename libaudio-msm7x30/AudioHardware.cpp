@@ -678,8 +678,7 @@ static status_t do_route_audio_rpc(uint32_t device,
     }
     else if(device == SND_DEVICE_SPEAKER) {
         new_rx_device = DEVICE_SPEAKER_RX;
-        new_tx_device = cur_tx; //temp fix until speaker_mono_tx is enabled
-        //new_tx_device = DEVICE_SPEAKER_TX;
+        new_tx_device = DEVICE_SPEAKER_TX;
         LOGV("In SPEAKER");
     }
     else if(device == SND_DEVICE_HEADSET) {
@@ -780,6 +779,21 @@ static status_t do_route_audio_rpc(uint32_t device,
             if(new_tx_device != INVALID_DEVICE /*&& new_tx_device != cur_tx*/ && msm_en_device(DEV_ID(new_tx_device), 1)) {
                 LOGE("msm_en_device[%d],1 failed errno = %d",DEV_ID(new_tx_device),errno);
                 return 0;
+            }
+
+            // Deroute existing PCM stream to the new device during start of a
+            // voice call
+            if(isStreamOnAndActive(PCM_PLAY)) {
+                temp = getNodeByStreamType(PCM_PLAY);
+                if(new_rx_device != INVALID_DEVICE) {
+                    if(msm_route_stream(PCM_PLAY,temp->dec_id,DEV_ID(temp->dev_id),0)) {
+                        LOGV("msm_route_stream(PCM_PLAY,%d,%d,0) failed",temp->dec_id,DEV_ID(temp->dev_id));
+                    }
+                    if(msm_route_stream(PCM_PLAY,temp->dec_id,DEV_ID(new_rx_device),1)) {
+                        LOGV("msm_route_stream(PCM_PLAY,%d,%d,1) failed",temp->dec_id,DEV_ID(new_rx_device));
+                    }
+                }
+                modifyActiveDeviceOfStream(PCM_PLAY,new_rx_device,INVALID_DEVICE);
             }
 
             // start Voice call
