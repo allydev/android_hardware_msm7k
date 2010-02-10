@@ -20,6 +20,7 @@
 
 #include <cutils/ashmem.h>
 #include <cutils/log.h>
+#include <cutils/properties.h>
 
 #include <hardware/hardware.h>
 #include <hardware/gralloc.h>
@@ -59,7 +60,8 @@ struct fb_context_t {
 /*****************************************************************************/
 
 static void
-msm_copy_buffer(buffer_handle_t handle, int fd, int width, int height,
+msm_copy_buffer(buffer_handle_t handle, int fd,
+                int width, int height, int format,
                 int x, int y, int w, int h);
 
 static int fb_setSwapInterval(struct framebuffer_device_t* dev,
@@ -138,8 +140,9 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 
         //memcpy(fb_vaddr, buffer_vaddr, m->finfo.line_length * m->info.yres);
 
-        msm_copy_buffer(m->framebuffer, m->framebuffer->fd,
-                m->info.xres, m->info.yres,
+        msm_copy_buffer(
+                m->framebuffer, m->framebuffer->fd,
+                m->info.xres, m->info.yres, m->fbFormat,
                 m->info.xoffset, m->info.yoffset,
                 m->info.width, m->info.height);
 
@@ -212,6 +215,7 @@ int mapFrameBufferLocked(struct private_module_t* module)
     info.transp.offset  = 0;
     info.transp.length  = 0;
 
+    module->fbFormat = HAL_PIXEL_FORMAT_RGB_565;
     /*
      * Request NUM_BUFFERS screens (at lest 2 for page flipping)
      */
@@ -322,7 +326,6 @@ int mapFrameBufferLocked(struct private_module_t* module)
         return -errno;
     }
     module->framebuffer->base = intptr_t(vaddr);
-    module->framebuffer->phys = intptr_t(finfo.smem_start);
     memset(vaddr, 0, fbSize);
     return 0;
 }
@@ -378,7 +381,7 @@ int fb_device_open(hw_module_t const* module, const char* name,
             const_cast<uint32_t&>(dev->device.width) = m->info.xres;
             const_cast<uint32_t&>(dev->device.height) = m->info.yres;
             const_cast<int&>(dev->device.stride) = stride;
-            const_cast<int&>(dev->device.format) = HAL_PIXEL_FORMAT_RGB_565;
+            const_cast<int&>(dev->device.format) = m->fbFormat;
             const_cast<float&>(dev->device.xdpi) = m->xdpi;
             const_cast<float&>(dev->device.ydpi) = m->ydpi;
             const_cast<float&>(dev->device.fps) = m->fps;
@@ -400,7 +403,8 @@ int fb_device_open(hw_module_t const* module, const char* name,
 /* Copy a pmem buffer to the framebuffer */
 
 static void
-msm_copy_buffer(buffer_handle_t handle, int fd, int width, int height,
+msm_copy_buffer(buffer_handle_t handle, int fd,
+                int width, int height, int format,
                 int x, int y, int w, int h)
 {
     struct {
@@ -425,7 +429,7 @@ msm_copy_buffer(buffer_handle_t handle, int fd, int width, int height,
     blit.req.dst.height = height;
     blit.req.dst.offset = 0;
     blit.req.dst.memory_id = fd; 
-    blit.req.dst.format = MDP_RGB_565;
+    blit.req.dst.format = format;
 
     blit.req.src_rect.x = blit.req.dst_rect.x = x;
     blit.req.src_rect.y = blit.req.dst_rect.y = y;
