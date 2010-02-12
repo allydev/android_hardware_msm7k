@@ -1656,8 +1656,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           gcfg.rec_type = RPC_VOC_REC_REVERSE;
         }
       }
-      else if ((mDevices == AudioSystem::DEVICE_IN_BUILTIN_MIC) ||
-               (mDevices == AudioSystem::DEVICE_IN_WIRED_HEADSET)) {
+      else {
         LOGI("Recording Source: Mic/Headset");
         gcfg.rec_type = RPC_VOC_REC_REVERSE;
       }
