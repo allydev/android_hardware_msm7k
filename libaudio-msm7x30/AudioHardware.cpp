@@ -130,15 +130,8 @@ enum FM_STATE {
     FM_ON
 };
 
-enum FM_DEVICE {
-    FM_INVALID_DEVICE,
-    FM_HANDSET,
-    FM_SPEAKER,
-    FM_HEADSET
-};
-
 FM_STATE fmState = FM_INVALID;
-FM_DEVICE fmDevice = FM_INVALID_DEVICE;
+static uint32_t fmDevice = INVALID_DEVICE;
 
 #define DEV_ID(X) device_list[X].dev_id
 void addToTable(int decoder_id,int device_id,int device_id_tx,int stream_type,bool active) {
@@ -253,21 +246,6 @@ void deleteFromTable(int Stream_type) {
         temp_ptr=temp_ptr->next;
     }
 
-}
-
-int getFmDeviceID(int fmDevice) {
-
-    int fm_device = INVALID_DEVICE;
-    if(fmDevice == FM_HANDSET) {
-       fm_device = DEVICE_FMRADIO_HANDSET_RX;
-    }
-    else if (fmDevice == FM_SPEAKER) {
-       fm_device = DEVICE_FMRADIO_SPEAKER_RX;
-    }
-    else if(fmDevice == FM_HEADSET) {
-       fm_device = DEVICE_FMRADIO_HEADSET_RX;
-    }
-    return fm_device;
 }
 //
 // ----------------------------------------------------------------------------
@@ -546,24 +524,24 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
     {
        if(value == FM_VALUE_HANDSET) {
            fmState  = FM_ON;
-           fmDevice = FM_HANDSET;
+           fmDevice = SND_DEVICE_FM_HANDSET;
            doRouting(NULL);
 
        }
        else if(value == FM_VALUE_SPEAKER) {
            fmState  = FM_ON;
-           fmDevice = FM_SPEAKER;
+           fmDevice = SND_DEVICE_FM_SPEAKER;
            doRouting(NULL);
        }
        if(value == FM_VALUE_HEADSET) {
            fmState  = FM_ON;
-           fmDevice = FM_HEADSET;
+           fmDevice = SND_DEVICE_FM_HEADSET;
            doRouting(NULL);
        }
        else if(value == FM_VALUE_FALSE) {
            fmState = FM_OFF;
            // Need to provide some device id for FM routing to go through
-           fmDevice = FM_HANDSET;
+           fmDevice = SND_DEVICE_FM_HANDSET;
            doRouting(NULL);
        }
     }
@@ -711,7 +689,7 @@ static status_t do_route_audio_rpc(uint32_t device,
     if(device == -1)
         return 0;
 
-    int new_rx_device = INVALID_DEVICE,new_tx_device = INVALID_DEVICE,fm_device = FM_INVALID;
+    int new_rx_device = INVALID_DEVICE,new_tx_device = INVALID_DEVICE,fm_device = INVALID_DEVICE;
     Routing_table* temp = NULL;
     LOGV("do_route_audio_rpc(%d, %d, %d)", device, ear_mute, mic_mute);
 
@@ -730,13 +708,16 @@ static status_t do_route_audio_rpc(uint32_t device,
         new_tx_device = DEVICE_HEADSET_TX;
         LOGV("In HEADSET");
     }
-    else if (device ==  DEVICE_FMRADIO_HANDSET_RX ) {
+    else if (device == SND_DEVICE_FM_HANDSET) {
+        fm_device = DEVICE_FMRADIO_HANDSET_RX;
         LOGV("In FM HANDSET");
     }
-    else if(device == DEVICE_FMRADIO_SPEAKER_RX ) {
+    else if(device == SND_DEVICE_FM_SPEAKER) {
+        fm_device = DEVICE_FMRADIO_SPEAKER_RX;
         LOGV("In FM SPEAKER");
     }
-    else if(device == DEVICE_FMRADIO_HEADSET_RX ) {
+    else if(device == SND_DEVICE_FM_HEADSET) {
+        fm_device = DEVICE_FMRADIO_HEADSET_RX;
         LOGV("In FM HEADSET");
     }
     else if(device == SND_DEVICE_IN_S_SADC_OUT_HANDSET) {
@@ -996,7 +977,7 @@ static status_t do_route_audio_rpc(uint32_t device,
             msm_en_device(DEV_ID(temp->dev_id),0);
             deleteFromTable(FM_RADIO);
             fmState = FM_INVALID;
-            fmDevice = FM_INVALID_DEVICE;
+            fmDevice = INVALID_DEVICE;
         }
         else if(fmState == FM_ON && isStreamOnAndInactive(FM_RADIO)) {
             LOGV("Enable FM which was in dormant mode");
@@ -1006,11 +987,10 @@ static status_t do_route_audio_rpc(uint32_t device,
             modifyActiveStateOfStream(FM_RADIO,true);
             msm_en_device(DEV_ID(temp->dev_id),1);
         }
-        else if(fmState == FM_ON &&  fmDevice != FM_INVALID_DEVICE) {
+        else if(fmState == FM_ON &&  fmDevice != INVALID_DEVICE) {
             LOGV("Going to enable fm radio");
             if(cur_rx != INVALID_DEVICE)
                 msm_en_device(DEV_ID(cur_rx),0);
-            fm_device = getFmDeviceID(fmDevice);
             if(fm_device != INVALID_DEVICE) {
                if(msm_en_device(DEV_ID(fm_device), 1)) {
                     LOGE("msm_en_device[%d],1 failed errno = %d",DEV_ID(fm_device),errno);
@@ -1020,7 +1000,7 @@ static status_t do_route_audio_rpc(uint32_t device,
             }
             //clear the fm routing info so that future routing to other devices
             //are not affected
-            fmDevice = FM_INVALID_DEVICE;
+            fmDevice = INVALID_DEVICE;
         }
         else if(isStreamOnAndActive(PCM_PLAY)) {
             //device switch during pcm playback
@@ -1124,9 +1104,8 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
     int sndDevice = -1;
 
     // handle fm device routing separately
-    if(fmState != FM_INVALID && fmDevice != FM_INVALID_DEVICE) {
-        sndDevice = getFmDeviceID(fmDevice);
-        ret = doAudioRouteOrMute(sndDevice);
+    if(fmState != FM_INVALID && fmDevice != INVALID_DEVICE) {
+        ret = doAudioRouteOrMute(fmDevice);
         return ret;
     }
 
