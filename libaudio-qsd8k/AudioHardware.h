@@ -151,6 +151,8 @@ enum tty_modes {
 #define AUDIO_HW_IN_CHANNELS (AudioSystem::CHANNEL_IN_MONO) // Default audio input channel mask
 #define AUDIO_KERNEL_PCM_IN_BUFFERSIZE 4096
 #define AUDIO_HW_IN_FORMAT (AudioSystem::PCM_16_BIT)  // Default audio input sample format
+
+#define VOICE_VOLUME_MAX 5  // Maximum voice volume
 // ----------------------------------------------------------------------------
 
 
@@ -303,6 +305,7 @@ private:
             msm_bt_endpoint *mBTEndpoints;
             int mNumBTEndpoints;
             int mCurSndDevice;
+            uint32_t mVoiceVolume;
             bool        mDualMicEnabled;
             int         mTtyMode;
 
