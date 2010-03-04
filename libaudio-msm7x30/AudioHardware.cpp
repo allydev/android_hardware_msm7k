@@ -1112,6 +1112,11 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
     if (input != NULL) {
         uint32_t inputDevice = input->devices();
         LOGI("do input routing device %x\n", inputDevice);
+        // ignore routing device information when we start a recording in voice
+        // call
+        // Recording will happen through currently active tx device
+        if(inputDevice == AudioSystem::DEVICE_IN_VOICE_CALL)
+            return NO_ERROR;
         if (inputDevice != 0) {
             if (inputDevice & AudioSystem::DEVICE_IN_BLUETOOTH_SCO_HEADSET) {
                 LOGI("Routing audio to Bluetooth PCM\n");
