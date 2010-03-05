@@ -42,9 +42,11 @@
 
 #define LOG_SND_RPC 0  // Set to 1 to log sound RPC's
 #define TX_PATH (1)
+#define AMRNB_DEVICE_IN "/dev/msm_amr_in"
 #define EVRC_DEVICE_IN "/dev/msm_evrc_in"
 #define QCELP_DEVICE_IN "/dev/msm_qcelp_in"
 #define AAC_DEVICE_IN "/dev/msm_aac_in"
+#define AMRNB_FRAME_SIZE 32
 #define EVRC_FRAME_SIZE 23
 #define QCELP_FRAME_SIZE 35
 
@@ -367,25 +369,34 @@ static unsigned calculate_audpre_table_index(unsigned index)
 }
 size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int channelCount)
 {
-    if ((format != AudioSystem::PCM_16_BIT) &&
-        (format != AudioSystem::EVRC) &&
-         (format != AudioSystem::QCELP) &&
-         (format != AudioSystem::AAC)){
-        LOGW("getInputBufferSize bad format: %d", format);
-        return 0;
+    switch (format) {
+        case AudioSystem::PCM_16_BIT:
+        case AudioSystem::EVRC:
+        case AudioSystem::AMR_NB:
+        case AudioSystem::QCELP:
+        case AudioSystem::AAC:
+             break;
+        default:
+            LOGW("getInputBufferSize bad format: %d", format);
+            return 0;
     }
     if (channelCount < 1 || channelCount > 2) {
         LOGW("getInputBufferSize bad channel count: %d", channelCount);
         return 0;
     }
-    if (format == AudioSystem::EVRC)
-       return 1150*channelCount;
-    else if (format == AudioSystem::QCELP)
-       return 1050*channelCount;
-    else if (format == AudioSystem::AAC)
-       return 2048;
-    else
-    return AUDIO_KERNEL_PCM_IN_BUFFERSIZE*channelCount;
+    switch (format) {
+        case AudioSystem::EVRC:
+            return 1150*channelCount;
+        case AudioSystem::AMR_NB:
+            return 1280*channelCount;
+        case AudioSystem::QCELP:
+            return 1050*channelCount;
+        case AudioSystem::AAC:
+            return 2048;
+            break;
+        default:
+            return AUDIO_KERNEL_PCM_IN_BUFFERSIZE*channelCount;
+    }
 }
 
 static status_t set_volume_rpc(uint32_t volume)
@@ -1025,14 +1036,16 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
 {
     status_t status = NO_ERROR;
 
-    if ((pFormat == 0) ||
-        ((*pFormat != AUDIO_HW_IN_FORMAT) &&
-        (*pFormat != AudioSystem::EVRC) &&
-        (*pFormat != AudioSystem::QCELP) &&
-        (*pFormat != AudioSystem::AAC)))
-    {
-        *pFormat = AUDIO_HW_IN_FORMAT;
-        return BAD_VALUE;
+    switch (*pFormat) {
+        case AUDIO_HW_IN_FORMAT:
+        case AudioSystem::EVRC:
+	case AudioSystem::AMR_NB:
+        case AudioSystem::QCELP:
+        case AudioSystem::AAC:
+             break;
+        default:
+            *pFormat = AUDIO_HW_IN_FORMAT;
+             return BAD_VALUE;
     }
 
     if((*pFormat == AudioSystem::AAC) && (*pChannels & (AudioSystem::CHANNEL_IN_VOICE_DNLINK |  AudioSystem::CHANNEL_IN_VOICE_UPLINK))) {
@@ -1061,64 +1074,126 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         LOGE("Audio record already open");
         return -EPERM;
     }
-    if(*pFormat == AUDIO_HW_IN_FORMAT)
+    struct msm_voicerec_mode voc_rec_cfg;
+    switch (*pFormat)
     {
-    // open audio input device
-    status_t status = ::open("/dev/msm_pcm_in", O_RDWR);
-    if (status < 0) {
-        LOGE("Cannot open /dev/msm_pcm_in errno: %d", errno);
-        goto Error;
-    }
-    mFd = status;
+        case AUDIO_HW_IN_FORMAT:
+        {
+           // open audio input device
+	   status = ::open("/dev/msm_pcm_in", O_RDWR);
+	   if (status < 0) {
+	       LOGE("Cannot open /dev/msm_pcm_in errno: %d", errno);
+	        goto Error;
+	   }
+	   mFd = status;
 
-    // configuration
-    LOGV("get config");
-    struct msm_audio_config config;
-    status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot read config");
-        goto Error;
-    }
+	   // configuration
+	   LOGV("get config");
+	   struct msm_audio_config config;
+	   status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
+	   if (status < 0) {
+               LOGE("Cannot read config");
+               goto Error;
+	   }
 
-    LOGV("set config");
-    config.channel_count = AudioSystem::popCount(*pChannels);
-    config.sample_rate = *pRate;
-    config.buffer_size = bufferSize();
-    config.buffer_count = 2;
-    config.type = CODEC_TYPE_PCM;
-    status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot set config");
-        if (ioctl(mFd, AUDIO_GET_CONFIG, &config) == 0) {
-            if (config.channel_count == 1) {
-                *pChannels = AudioSystem::CHANNEL_IN_MONO;
-            } else {
-                *pChannels = AudioSystem::CHANNEL_IN_STEREO;
-            }
-            *pRate = config.sample_rate;
+	   LOGV("set config");
+	   config.channel_count = AudioSystem::popCount(*pChannels);
+	   config.sample_rate = *pRate;
+	   config.buffer_size = bufferSize();
+	   config.buffer_count = 2;
+	   config.type = CODEC_TYPE_PCM;
+	   status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
+	   if (status < 0) {
+	       LOGE("Cannot set config");
+	       if (ioctl(mFd, AUDIO_GET_CONFIG, &config) == 0) {
+	           if (config.channel_count == 1) {
+		       *pChannels = AudioSystem::CHANNEL_IN_MONO;
+		   } else {
+		       *pChannels = AudioSystem::CHANNEL_IN_STEREO;
+		   }
+		       *pRate = config.sample_rate;
+	       }
+	       goto Error;
+	   }
+
+	   LOGV("confirm config");
+	   status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
+	   if (status < 0) {
+	       LOGE("Cannot read config");
+	       goto Error;
+	   }
+	   LOGV("buffer_size: %u", config.buffer_size);
+	   LOGV("buffer_count: %u", config.buffer_count);
+	   LOGV("channel_count: %u", config.channel_count);
+	   LOGV("sample_rate: %u", config.sample_rate);
+
+	   mDevices = devices;
+	   mFormat = AUDIO_HW_IN_FORMAT;
+	   mChannels = *pChannels;
+	   mSampleRate = config.sample_rate;
+	   mBufferSize = config.buffer_size;
+	   break;
+	}
+        case AudioSystem::AMR_NB:
+        {
+	    LOGI("Recording format: AMR_NB");
+	    // open amrnb input device
+          status = ::open(AMRNB_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open amrnb device for read");
+              goto Error;
+          }
+          mFd = status;
+          mDevices = devices;
+          mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                   (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                   LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
+
+          mSampleRate =8000;
+          mFormat = *pFormat;
+          mBufferSize = 1280;
+          struct msm_audio_amrnb_enc_config_v2 amrnb_enc_cfg;
+
+          if (ioctl(mFd, AUDIO_GET_AMRNB_ENC_CONFIG, &amrnb_enc_cfg))
+          {
+            LOGE("Error: AUDIO_GET_AMRNB_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config band mode is %d", amrnb_enc_cfg.band_mode);
+          LOGV("The Config dtx_enable is %d", amrnb_enc_cfg.dtx_enable);
+
+          amrnb_enc_cfg.band_mode =  7;
+          amrnb_enc_cfg.dtx_enable = 0;
+
+          if (ioctl(mFd, AUDIO_SET_AMRNB_ENC_CONFIG, &amrnb_enc_cfg))
+          {
+            LOGE("Error: AUDIO_SET_AMRNB_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+          break;
         }
-        goto Error;
-    }
-
-    LOGV("confirm config");
-    status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot read config");
-        goto Error;
-    }
-    LOGV("buffer_size: %u", config.buffer_size);
-    LOGV("buffer_count: %u", config.buffer_count);
-    LOGV("channel_count: %u", config.channel_count);
-    LOGV("sample_rate: %u", config.sample_rate);
-
-    mDevices = devices;
-    mFormat = AUDIO_HW_IN_FORMAT;
-    mChannels = *pChannels;
-    mSampleRate = config.sample_rate;
-    mBufferSize = config.buffer_size;
-    }
-    else if (*pFormat == AudioSystem::EVRC)
-    {
+        case AudioSystem::EVRC:
+        {
           LOGI("Recording format: EVRC");
           // open evrc input device
           status = ::open(EVRC_DEVICE_IN, O_RDWR);
@@ -1129,6 +1204,28 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           mFd = status;
           mDevices = devices;
           mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                   (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                   LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
+
           mSampleRate =8000;
           mFormat = *pFormat;
           mBufferSize = 1150;
@@ -1152,9 +1249,10 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
             LOGE("Error: AUDIO_SET_EVRC_ENC_CONFIG failed\n");
             goto  Error;
           }
-    }
-    else if (*pFormat == AudioSystem::QCELP)
-    {
+          break;
+        }
+        case AudioSystem::QCELP:
+        {
           LOGI("Recording format: QCELP");
           // open qcelp input device
           status = ::open(QCELP_DEVICE_IN, O_RDWR);
@@ -1165,6 +1263,28 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           mFd = status;
           mDevices = devices;
           mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                   (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                   LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
+
           mSampleRate =8000;
           mFormat = *pFormat;
           mBufferSize = 1050;
@@ -1188,9 +1308,10 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
             LOGE("Error: AUDIO_SET_QCELP_ENC_CONFIG failed\n");
             goto  Error;
           }
-    }
-    else if(*pFormat == AudioSystem::AAC)
-    {
+          break;
+        }
+        case AudioSystem::AAC:
+        {
         // open AAC input device
         status = ::open(AAC_DEVICE_IN, O_RDWR);
             if (status < 0) {
@@ -1211,6 +1332,28 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
 
         mDevices = devices;
         mChannels = *pChannels;
+
+        if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+        {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                   (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                   LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+        }
+
         mSampleRate = *pRate;
         mBufferSize = 2048;
         mFormat = *pFormat;
@@ -1222,6 +1365,8 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
             LOGE(" Error in setting config of msm_pcm_in device \n");
 			goto Error;
         }
+        break;
+      }
     }
 
     //mHardware->setMicMute_nosync(false);
@@ -1322,8 +1467,8 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
 	      }
         }
     }
-    if(mFormat == AUDIO_HW_IN_FORMAT)
-    {
+    switch (mFormat) {
+        case AUDIO_HW_IN_FORMAT:
         while (count) {
             ssize_t bytesRead = ::read(mFd, buffer, count);
             if (bytesRead >= 0) {
@@ -1338,10 +1483,27 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                 LOGW("EAGAIN - retrying");
             }
         }
-    }
-    else if (mFormat == AudioSystem::EVRC)
-    {
-       while (count) {
+        break;
+
+        case AudioSystem::AMR_NB:
+        while (count) {
+            ssize_t bytesRead = ::read(mFd, buffer, AMRNB_FRAME_SIZE);
+            if (bytesRead >= 0) {
+                p += AMRNB_FRAME_SIZE;
+                count -= AMRNB_FRAME_SIZE;
+                bytes += AMRNB_FRAME_SIZE;
+                buffer += AMRNB_FRAME_SIZE;
+            }
+            else {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+        break;
+
+	case AudioSystem::EVRC:
+        while (count) {
             ssize_t bytesRead = ::read(mFd, buffer, EVRC_FRAME_SIZE);
             if (bytesRead >= 0) {
                 p += EVRC_FRAME_SIZE;
@@ -1355,10 +1517,10 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                 LOGW("EAGAIN - retrying");
             }
         }
-    }
-    else if (mFormat == AudioSystem::QCELP)
-    {
-       while (count) {
+        break;
+
+	case AudioSystem::QCELP:
+        while (count) {
             ssize_t bytesRead = ::read(mFd, buffer, QCELP_FRAME_SIZE);
             if (bytesRead >= 0) {
                 p += QCELP_FRAME_SIZE;
@@ -1372,6 +1534,7 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                 LOGW("EAGAIN - retrying");
             }
         }
+        break;
     }
     if (mFormat == AudioSystem::AAC)
         return aac_framesize;
