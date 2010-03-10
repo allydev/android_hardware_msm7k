@@ -141,7 +141,6 @@ struct private_module_t {
     buffer_handle_t currentBuffer;
     int pmem_master;
     void* pmem_master_base;
-    unsigned long master_phys;
 
     struct fb_var_screeninfo info;
     struct fb_fix_screeninfo finfo;
@@ -203,7 +202,7 @@ struct private_handle_t {
     int     pid;
 
 #ifdef __cplusplus
-    static const int sNumInts = 11;
+    static const int sNumInts = 10;
     static const int sNumFds = 1;
     static const int sMagic = 'gmsm';
 
@@ -242,7 +241,6 @@ struct private_handle_t {
         return NULL;
     }
 #endif
-    int     phys; // The physical address of that chunk of memory. If using ashmem, set to 0 They don't care
 };
 
 #endif /* GRALLOC_PRIV_H_ */
