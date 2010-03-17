@@ -1419,6 +1419,7 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
 		if (status != NO_ERROR) { 
             return -1;
         }
+        mFirstread = false;
     }
 
     if (mState < AUDIO_INPUT_STARTED) {
@@ -1462,8 +1463,13 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                   p += bytesRead;
                   bytes += bytesRead;
                   LOGV("Total Number of Bytes read = %d", bytes);
-		  *frameSizePtr =  bytesRead;
-		  (*frameCountPtr)++;
+                  *frameSizePtr =  bytesRead;
+                  (*frameCountPtr)++;
+                  if(!mFirstread)
+                  {
+                     mFirstread = true;
+                     break;
+                  }
 	      }
         }
     }
@@ -1475,6 +1481,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                 count -= bytesRead;
                 p += bytesRead;
                 bytes += bytesRead;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
             }
             else
             {
@@ -1493,6 +1504,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                 count -= AMRNB_FRAME_SIZE;
                 bytes += AMRNB_FRAME_SIZE;
                 buffer += AMRNB_FRAME_SIZE;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
             }
             else {
                 if (errno != EAGAIN) return bytesRead;
@@ -1510,6 +1526,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                 count -= EVRC_FRAME_SIZE;
                 bytes += EVRC_FRAME_SIZE;
                 buffer += EVRC_FRAME_SIZE;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
             }
             else {
                 if (errno != EAGAIN) return bytesRead;
@@ -1527,6 +1548,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                 count -= QCELP_FRAME_SIZE;
                 bytes += QCELP_FRAME_SIZE;
                 buffer += QCELP_FRAME_SIZE;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
             }
             else {
                 if (errno != EAGAIN) return bytesRead;

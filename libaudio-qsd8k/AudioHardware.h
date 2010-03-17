@@ -291,6 +291,7 @@ private:
                 size_t      mBufferSize;
                 AudioSystem::audio_in_acoustics mAcoustics;
                 uint32_t    mDevices;
+                bool mFirstread;
     };
 
             static const uint32_t inputSamplingRates[];
