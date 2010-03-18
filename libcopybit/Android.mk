@@ -17,7 +17,7 @@ LOCAL_PATH:= $(call my-dir)
 # HAL module implemenation, not prelinked and stored in
 # hw/<COPYPIX_HARDWARE_MODULE_ID>.<ro.board.platform>.so
 
-ifeq (, $(filter msm7630_surf, $(TARGET_PRODUCT)))
+ifneq "$(findstring msm7630,$(TARGET_PRODUCT))" "msm7630"
 ifeq ($(TARGET_BOARD_PLATFORM),msm7k)
 include $(CLEAR_VARS)
 LOCAL_PRELINK_MODULE := false
