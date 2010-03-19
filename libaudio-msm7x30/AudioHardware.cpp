@@ -1982,6 +1982,7 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
             return -1;
         }
         addToTable(dec_id,cur_tx,INVALID_DEVICE,PCM_REC,true);
+        mFirstread = false;
     }
 
     if (mState < AUDIO_INPUT_STARTED) {
@@ -2001,6 +2002,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                 count -= bytesRead;
                 p += bytesRead;
                 bytes += bytesRead;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
             } else {
                 if (errno != EAGAIN) return bytesRead;
                 mRetryCount++;
@@ -2021,6 +2027,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                    p += AMRNB_FRAME_SIZE;
                    count -= AMRNB_FRAME_SIZE;
                    bytes += AMRNB_FRAME_SIZE;
+                   if(!mFirstread)
+                   {
+                      mFirstread = true;
+                      break;
+                   }
                 }
                 else {
                     dataPtr++;
@@ -2029,12 +2040,22 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                        p += EVRC_FRAME_SIZE;
                        count -= EVRC_FRAME_SIZE;
                        bytes += EVRC_FRAME_SIZE;
+                       if(!mFirstread)
+                       {
+                          mFirstread = true;
+                          break;
+                       }
                     }
                     else if (mFormat == AudioSystem::QCELP){
                        memcpy(p, dataPtr, QCELP_FRAME_SIZE);
                        p += QCELP_FRAME_SIZE;
                        count -= QCELP_FRAME_SIZE;
                        bytes += QCELP_FRAME_SIZE;
+                       if(!mFirstread)
+                       {
+                          mFirstread = true;
+                          break;
+                       }
                     }
                 }
 
@@ -2070,6 +2091,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
 
                 *frameSizePtr =  bytesRead;
                 (*frameCountPtr)++;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
             }
             else if(bytesRead == 0)
             {
