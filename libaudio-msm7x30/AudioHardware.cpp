@@ -644,24 +644,6 @@ static status_t set_volume_rpc(uint32_t device,
      return NO_ERROR;
 }
 
-int mapVolume(int vol)
-{
-    int volume = 0;
-    if(vol > 0 && vol <= 17)
-        volume = 0;
-    else if(vol > 17 && vol <=34)
-        volume = 20;
-    else if(vol > 35 && vol <=50)
-        volume = 40;
-    else if(vol > 50 && vol <=67)
-        volume = 60;
-    else if(vol > 67 && vol <= 84)
-        volume = 80;
-    else
-        volume = 100;
-    return volume;
-}
-
 status_t AudioHardware::setVoiceVolume(float v)
 {
     if (v < 0.0) {
@@ -673,8 +655,6 @@ status_t AudioHardware::setVoiceVolume(float v)
     }
 
     int vol = lrint(v * 100.0);
-    // map android volume level to 3db volume step in driver
-    vol = mapVolume(vol);
     LOGD("setVoiceVolume(%f)\n", v);
     LOGI("Setting in-call volume to %d (available range is 0 to 100)\n", vol);
 
