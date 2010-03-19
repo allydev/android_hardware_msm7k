@@ -1866,6 +1866,7 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
         if (status != NO_ERROR) {
             return -1;
         }
+        mFirstread = false;
     }
 
     if (mState < AUDIO_INPUT_STARTED) {
@@ -1940,6 +1941,12 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
             if (mFormat == AudioSystem::AAC){
                 *frameSizePtr =  bytesRead;
                 (*frameCountPtr)++;
+            }
+
+            if(!mFirstread)
+            {
+               mFirstread = true;
+               break;
             }
 
             // Ensure that the minimum buffer that can be sent is checked for 320 bytes
