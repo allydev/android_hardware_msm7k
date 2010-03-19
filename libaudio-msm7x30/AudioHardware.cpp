@@ -757,11 +757,11 @@ static status_t do_route_audio_rpc(uint32_t device,
     }
     else if(device == SND_DEVICE_TTY_VCO) {
         new_rx_device = DEVICE_TTY_HEADSET_MONO_RX;
-        new_tx_device = DEVICE_HEADSET_TX;
+        new_tx_device = DEVICE_HANDSET_TX;
         LOGV("In TTY_VCO");
     }
     else if(device == SND_DEVICE_TTY_HCO) {
-        new_rx_device = DEVICE_HEADSET_RX;
+        new_rx_device = DEVICE_HANDSET_RX;
         new_tx_device = DEVICE_TTY_HEADSET_MONO_TX;
         LOGV("In TTY_HCO");
     }
