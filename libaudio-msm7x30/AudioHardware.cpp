@@ -1357,11 +1357,6 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
         }
         mFd = status;
 
-        if(msm_en_device(DEV_ID(cur_rx), 1)) {
-            LOGE("msm_en_device failed for device cur_rx %d", cur_rx);
-            return 0;
-        }
-
         // configuration
         LOGV("get config");
         struct msm_audio_config config;
@@ -1412,9 +1407,14 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
                 LOGE("AUDIO_GET_SESSION_ID failed*********");
                 return 0;
             }
-        LOGV("dec_id = %d\n",dec_id);
+            LOGV("dec_id = %d\n",dec_id);
             if(cur_rx == INVALID_DEVICE)
                 return 0;
+            LOGV("cur_rx for pcm playback = %d",cur_rx);
+            if(msm_en_device(DEV_ID(cur_rx), 1)) {
+                LOGE("msm_en_device failed for device cur_rx %d", cur_rx);
+                return 0;
+            }
             if(msm_route_stream(PCM_PLAY, dec_id, DEV_ID(cur_rx), 1)) {
                 LOGE("msm_route_stream failed");
                 return 0;
