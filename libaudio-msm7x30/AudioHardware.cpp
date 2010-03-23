@@ -64,7 +64,7 @@ static uint32_t SND_DEVICE_FM_SPEAKER= 4;
 static uint32_t SND_DEVICE_FM_HEADSET= 5;
 static uint32_t SND_DEVICE_BT= 6;
 static uint32_t SND_DEVICE_BT_EC_OFF=-1;
-static uint32_t SND_DEVICE_HEADSET_AND_SPEAKER=-1;
+static uint32_t SND_DEVICE_HEADSET_AND_SPEAKER=7;
 static uint32_t SND_DEVICE_IN_S_SADC_OUT_HANDSET=9;
 static uint32_t SND_DEVICE_IN_S_SADC_OUT_SPEAKER_PHONE=10;
 static uint32_t SND_DEVICE_TTY_HEADSET=11;
@@ -89,7 +89,7 @@ static uint32_t DEVICE_TTY_HEADSET_MONO_RX = 11; //tty_headset_mono_rx
 static uint32_t DEVICE_TTY_HEADSET_MONO_TX = 12; //tty_headset_mono_tx
 static uint32_t DEVICE_BT_SCO_RX = 17; //bt_sco_rx
 static uint32_t DEVICE_BT_SCO_TX = 18; //bt_sco_tx
-
+static uint32_t DEVICE_SPEAKER_HEADSET_RX = 13; //headset_stereo_speaker_stereo_rx
 
 int dev_cnt = 0;
 const char ** name = NULL;
@@ -312,6 +312,8 @@ AudioHardware::AudioHardware() :
                 index = DEVICE_BT_SCO_RX;
             else if(strcmp((char* )name[i],"bt_sco_tx") == 0)
                 index = DEVICE_BT_SCO_TX;
+            else if(strcmp((char*)name[i],"headset_stereo_speaker_stereo_rx") == 0)
+                index = DEVICE_SPEAKER_HEADSET_RX;
             else
                 continue;
             LOGV("index = %d",index);
@@ -749,6 +751,11 @@ static status_t do_route_audio_rpc(uint32_t device,
         new_rx_device = DEVICE_BT_SCO_RX;
         new_tx_device = DEVICE_BT_SCO_TX;
         LOGV("In BT_HCO");
+    }
+    else if(device == SND_DEVICE_HEADSET_AND_SPEAKER) {
+        new_rx_device = DEVICE_SPEAKER_HEADSET_RX;
+        new_tx_device = DEVICE_HEADSET_TX;
+        LOGV("In DEVICE_SPEAKER_HEADSET_RX and DEVICE_HEADSET_TX");
     }
 
     if(new_rx_device != INVALID_DEVICE)
