@@ -774,6 +774,7 @@ public:
 
 			munmap(ctx->pmem_addr, ctx->pmem_offset * 2);
 #ifdef USE_MSM_ROTATOR
+			close(ctx->rotator);
 			close(ctx->pmem);
 #endif
 			close(ctx->mFD);
