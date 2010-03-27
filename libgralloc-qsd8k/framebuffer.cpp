@@ -238,9 +238,6 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
         }
 
     } else {
-        // If we can't do the page_flip, just copy the buffer to the front 
-        // FIXME: use copybit HAL instead of memcpy
-        
         void* fb_vaddr;
         void* buffer_vaddr;
         
@@ -329,20 +326,51 @@ int mapFrameBufferLocked(struct private_module_t* module)
     info.yoffset = 0;
     info.activate = FB_ACTIVATE_NOW;
 
-    /*
-     * Explicitly request 5/6/5
-     */
-    info.bits_per_pixel = 16;
-    info.red.offset     = 11;
-    info.red.length     = 5;
-    info.green.offset   = 5;
-    info.green.length   = 6;
-    info.blue.offset    = 0;
-    info.blue.length    = 5;
-    info.transp.offset  = 0;
-    info.transp.length  = 0;
+    /* Interpretation of offset for color fields: All offsets are from the right,
+    * inside a "pixel" value, which is exactly 'bits_per_pixel' wide (means: you
+    * can use the offset as right argument to <<). A pixel afterwards is a bit
+    * stream and is written to video memory as that unmodified. This implies
+    * big-endian byte order if bits_per_pixel is greater than 8.
+    */
 
-    module->fbFormat = HAL_PIXEL_FORMAT_RGB_565;
+    if(info.bits_per_pixel == 32) {
+	/*
+	* Explicitly request RGBA_8888
+	*/
+	info.bits_per_pixel = 32;
+	info.red.offset     = 24;
+	info.red.length     = 8;
+	info.green.offset   = 16;
+	info.green.length   = 8;
+	info.blue.offset    = 8;
+	info.blue.length    = 8;
+	info.transp.offset  = 0;
+	info.transp.length  = 8;
+
+	/* Note: the GL driver does not have a r=8 g=8 b=8 a=0 config, so if we do
+	* not use the MDP for composition (i.e. hw composition == 0), ask for
+	* RGBA instead of RGBX. */
+	char property[PROPERTY_VALUE_MAX];
+	if (property_get("debug.sf.hw", property, NULL) > 0 && atoi(property) == 0)
+		module->fbFormat = HAL_PIXEL_FORMAT_RGBX_8888;
+	else
+		module->fbFormat = HAL_PIXEL_FORMAT_RGBA_8888;
+    } else {
+	/*
+	* Explicitly request 5/6/5
+	*/
+	info.bits_per_pixel = 16;
+	info.red.offset     = 11;
+	info.red.length     = 5;
+	info.green.offset   = 5;
+	info.green.length   = 6;
+	info.blue.offset    = 0;
+	info.blue.length    = 5;
+	info.transp.offset  = 0;
+	info.transp.length  = 0;
+        LOGE("RGB565");
+	module->fbFormat = HAL_PIXEL_FORMAT_RGB_565;
+    }
     /*
      * Request NUM_BUFFERS screens (at lest 2 for page flipping)
      */
