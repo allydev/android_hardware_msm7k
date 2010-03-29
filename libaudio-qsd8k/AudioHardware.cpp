@@ -70,11 +70,13 @@ static const uint32_t SND_DEVICE_NO_MIC_HEADSET_BACK_MIC = 28;
 static const uint32_t SND_DEVICE_HANDSET_DUAL_MIC = 32;
 static const uint32_t SND_DEVICE_SPEAKER_DUAL_MIC = 31;
 static const uint32_t SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC = 30;
+static uint32_t MIKE_ID_SPKR = 0x2B;
+static uint32_t MIKE_ID_HANDSET = 0x2C;
 namespace android {
 static int old_pathid = -1;
 static int new_pathid = -1;
-static int curr_out_device = -1;
-static int curr_mic_device = -1;
+static int curr_out_device[2] = {-1,-1};
+static int curr_mic_device[2] = {-1,-1};
 static int voice_started = 0;
 static int fd_fm_device = -1;
 static int stream_volume = -300;
@@ -103,7 +105,24 @@ AudioHardware::AudioHardware() :
         close(fd);
     }
     mInit = true;
-
+    static const char *const path = "/system/etc/DualMicControl.txt";
+    FILE *fp;
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+         LOGE("failed to open DualMicControl %s: %s (%d)",
+               path, strerror(errno), errno);
+    }
+    else {
+         if(fgetc(fp) == '0'){
+            MIKE_ID_HANDSET = CAD_HW_DEVICE_ID_HANDSET_DUAL_MIC_BROADSIDE;
+            MIKE_ID_SPKR = CAD_HW_DEVICE_ID_SPKR_PHONE_DUAL_MIC_BROADSIDE;
+         }
+         else{
+             MIKE_ID_HANDSET = CAD_HW_DEVICE_ID_HANDSET_DUAL_MIC_ENDFIRE;
+             MIKE_ID_SPKR = CAD_HW_DEVICE_ID_SPKR_PHONE_DUAL_MIC_ENDFIRE;
+         }
+        fclose(fp);
+    }
 }
 AudioHardware::~AudioHardware()
 {
@@ -447,82 +466,83 @@ status_t AudioHardware::setMasterVolume(float v)
 
 static status_t do_route_audio_dev_ctrl(uint32_t device, bool inCall)
 {
-    uint32_t out_device = 0, mic_device = 0;
+    uint32_t out_device[2] = {0,0}, mic_device[2] = {0,0};
     int fd = 0;
 
     if (device == SND_DEVICE_CURRENT)
         goto Incall;
-
     // hack -- kernel needs to put these in include file
     LOGD("Switching audio device to ");
     if (device == SND_DEVICE_HANDSET) {
-           out_device = HANDSET_SPKR;
-           mic_device = HANDSET_MIC;
+           out_device[0] = HANDSET_SPKR;
+           mic_device[0] = HANDSET_MIC;
            LOGD("Handset");
     } else if ((device  == SND_DEVICE_BT) || (device == SND_DEVICE_BT_EC_OFF)) {
-           out_device = BT_SCO_SPKR;
-           mic_device = BT_SCO_MIC;
+           out_device[0] = BT_SCO_SPKR;
+           mic_device[0] = BT_SCO_MIC;
            LOGD("BT Headset");
     } else if (device == SND_DEVICE_SPEAKER ||
                device == SND_DEVICE_SPEAKER_BACK_MIC) {
-           out_device = SPKR_PHONE_MONO;
-           mic_device = SPKR_PHONE_MIC;
+           out_device[0] = SPKR_PHONE_MONO;
+           mic_device[0] = SPKR_PHONE_MIC;
            LOGD("Speakerphone");
     } else if (device == SND_DEVICE_HEADSET) {
-           out_device = HEADSET_SPKR_STEREO;
-           mic_device = HEADSET_MIC;
+           out_device[0] = HEADSET_SPKR_STEREO;
+           mic_device[0] = HEADSET_MIC;
            LOGD("Stereo Headset");
     } else if (device == SND_DEVICE_HEADSET_AND_SPEAKER) {
-           out_device = SPKR_PHONE_HEADSET_STEREO;
-           mic_device = HEADSET_MIC;
+           out_device[0] = SPKR_PHONE_HEADSET_STEREO;
+           mic_device[0] = HEADSET_MIC;
            LOGD("Stereo Headset + Speaker");
     } else if (device == SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC) {
-           out_device = SPKR_PHONE_HEADSET_STEREO;
-           mic_device = SPKR_PHONE_MIC;
+           out_device[0] = SPKR_PHONE_HEADSET_STEREO;
+           mic_device[0] = SPKR_PHONE_MIC;
            LOGD("Stereo Headset + Speaker and back mic");
     } else if (device == SND_DEVICE_NO_MIC_HEADSET) {
-           out_device = HEADSET_SPKR_STEREO;
-           mic_device = HANDSET_MIC;
+           out_device[0] = HEADSET_SPKR_STEREO;
+           mic_device[0] = HANDSET_MIC;
            LOGD("No microphone Wired Headset");
     } else if (device == SND_DEVICE_NO_MIC_HEADSET_BACK_MIC) {
-           out_device = HEADSET_SPKR_STEREO;
-           mic_device = SPKR_PHONE_MIC;
+           out_device[0] = HEADSET_SPKR_STEREO;
+           mic_device[0] = SPKR_PHONE_MIC;
            LOGD("No microphone Wired Headset and back mic");
     } else if (device == SND_DEVICE_HANDSET_BACK_MIC) {
-           out_device = HANDSET_SPKR;
-           mic_device = SPKR_PHONE_MIC;
+           out_device[0] = HANDSET_SPKR;
+           mic_device[0] = SPKR_PHONE_MIC;
            LOGD("Handset and back mic");
     } else if (device == SND_DEVICE_FM_HEADSET) {
-           out_device = FM_HEADSET;
-           mic_device = HEADSET_MIC;
+           out_device[0] = FM_HEADSET;
+           mic_device[0] = HEADSET_MIC;
            LOGD("Stereo FM headset");
     } else if (device == SND_DEVICE_FM_SPEAKER) {
-           out_device = FM_SPKR;
-           mic_device = HEADSET_MIC;
+           out_device[0] = FM_SPKR;
+           mic_device[0] = HEADSET_MIC;
            LOGD("Stereo FM speaker");
     } else if (device == SND_DEVICE_TTY_FULL) {
-           out_device = TTY_HEADSET_SPKR;
-           mic_device = TTY_HEADSET_MIC;
+           out_device[0] = TTY_HEADSET_SPKR;
+           mic_device[0] = TTY_HEADSET_MIC;
            LOGD("TTY headset in FULL mode\n");
     } else if (device == SND_DEVICE_TTY_VCO) {
-           out_device = TTY_HEADSET_SPKR;
-           mic_device = HANDSET_MIC;
+           out_device[0] = TTY_HEADSET_SPKR;
+           mic_device[0] = HANDSET_MIC;
            LOGD("TTY headset in VCO mode\n");
     } else if (device == SND_DEVICE_TTY_HCO) {
-           out_device = HANDSET_SPKR;
-           mic_device = TTY_HEADSET_MIC;
+           out_device[0] = HANDSET_SPKR;
+           mic_device[0] = TTY_HEADSET_MIC;
            LOGD("TTY headset in HCO mode\n");
     } else if (device == SND_DEVICE_HANDSET_DUAL_MIC) {
-           out_device = HANDSET_SPKR;
-           mic_device = HANDSET_DUALMIC;
+           out_device[0] = HANDSET_SPKR;
+           mic_device[0] = HANDSET_DUALMIC;
+           mic_device[1] = MIKE_ID_HANDSET;
            LOGD("Handset with DualMike");
     } else if (device == SND_DEVICE_SPEAKER_DUAL_MIC) {
-           out_device = SPKR_PHONE_MONO;
-           mic_device = SPKR_DUALMIC;
+           out_device[0] = SPKR_PHONE_MONO;
+           mic_device[0] = SPKR_DUALMIC;
+           mic_device[1] = MIKE_ID_SPKR;
            LOGD("Speakerphone with DualMike");
     } else if (device == SND_DEVICE_CARKIT) {
-           out_device = BT_SCO_SPKR;
-           mic_device = BT_SCO_MIC;
+           out_device[0] = BT_SCO_SPKR;
+           mic_device[0] = BT_SCO_MIC;
            LOGD("Carkit");
     } else {
            LOGE("unknown device %d", device);
@@ -544,8 +564,9 @@ static status_t do_route_audio_dev_ctrl(uint32_t device, bool inCall)
        close(fd);
        return -1;
     }
-    curr_out_device = out_device;
-    curr_mic_device = mic_device;
+    curr_out_device[0] = out_device[0];
+    curr_mic_device[0] = mic_device[0];
+    curr_mic_device[1] = mic_device[1];
 
 Incall:
     if (inCall == true && !voice_started) {

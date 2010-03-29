@@ -111,7 +111,10 @@ namespace android {
 #define EQ_DISABLE   0x0000
 #define RX_IIR_ENABLE   0x0004
 #define RX_IIR_DISABLE  0x0000
-
+#define CAD_HW_DEVICE_ID_SPKR_PHONE_DUAL_MIC_BROADSIDE      0x2B
+#define CAD_HW_DEVICE_ID_SPKR_PHONE_DUAL_MIC_ENDFIRE        0x2D
+#define CAD_HW_DEVICE_ID_HANDSET_DUAL_MIC_BROADSIDE         0x2C
+#define CAD_HW_DEVICE_ID_HANDSET_DUAL_MIC_ENDFIRE           0x2E
 struct msm_bt_endpoint {
     int tx;
     int rx;
