@@ -968,11 +968,11 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
     }
 
     if(format == AudioSystem::AMR_NB)
-       return 1280*channelCount;
+       return 320*channelCount;
     else if (format == AudioSystem::EVRC)
-       return 1150*channelCount;
+       return 230*channelCount;
     else if (format == AudioSystem::QCELP)
-       return 1050*channelCount;
+       return 350*channelCount;
     else if (format == AudioSystem::AAC)
        return 2048;
     else
@@ -1674,7 +1674,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           gcfg.min_rate = RPC_VOC_AMR_RATE_1220; // Min rate (Fixed frame length)
           gcfg.frame_format = RPC_VOC_PB_AMR; // RPC_VOC_PB_AMR
           mFormat = AudioSystem::AMR_NB;
-          mBufferSize = 1280;
+          mBufferSize = 320;
           break;
         }
 
@@ -1686,7 +1686,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           gcfg.min_rate = RPC_VOC_1_RATE; // Min rate (Fixed frame length)
           gcfg.frame_format = RPC_VOC_PB_NATIVE_QCP;
           mFormat = AudioSystem::EVRC;
-          mBufferSize = 1150;
+          mBufferSize = 230;
           break;
         }
 
@@ -1698,7 +1698,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           gcfg.min_rate = RPC_VOC_1_RATE; // Min rate (Fixed frame length)
           gcfg.frame_format = RPC_VOC_PB_NATIVE_QCP;
           mFormat = AudioSystem::QCELP;
-          mBufferSize = 1050;
+          mBufferSize = 350;
           break;
         }
 

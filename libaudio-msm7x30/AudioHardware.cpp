@@ -625,11 +625,11 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
     }
 
     if (format == AudioSystem::AMR_NB)
-       return 1280*channelCount;
+       return 320*channelCount;
     if (format == AudioSystem::EVRC)
-       return 1150*channelCount;
+       return 230*channelCount;
     else if (format == AudioSystem::QCELP)
-       return 1050*channelCount;
+       return 350*channelCount;
     else if (format == AudioSystem::AAC)
        return 2048;
     else
@@ -1682,7 +1682,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
 
           mSampleRate =8000;
           mFormat = *pFormat;
-          mBufferSize = 1150;
+          mBufferSize = 230;
           struct msm_audio_evrc_enc_config evrc_enc_cfg;
 
           if (ioctl(mFd, AUDIO_GET_EVRC_ENC_CONFIG, &evrc_enc_cfg))
@@ -1751,7 +1751,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
 
           mSampleRate =8000;
           mFormat = *pFormat;
-          mBufferSize = 1050;
+          mBufferSize = 350;
 
           struct msm_audio_qcelp_enc_config qcelp_enc_cfg;
 
@@ -1821,7 +1821,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
 
           mSampleRate =8000;
           mFormat = *pFormat;
-          mBufferSize = 1280;
+          mBufferSize = 320;
           struct msm_audio_amrnb_enc_config_v2 amr_nb_cfg;
 
           if (ioctl(mFd, AUDIO_GET_AMRNB_ENC_CONFIG_V2, &amr_nb_cfg))
