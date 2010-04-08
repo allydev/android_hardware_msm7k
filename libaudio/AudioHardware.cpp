@@ -1148,15 +1148,8 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                 LOGI("Routing audio to Bluetooth PCM\n");
                 sndDevice = SND_DEVICE_BT;
             } else if (inputDevice & AudioSystem::DEVICE_IN_WIRED_HEADSET) {
-                if ((outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) &&
-                    (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
-                    LOGI("Routing audio to Wired Headset and Speaker\n");
-                    sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
-                    audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE | MBADRC_ENABLE);
-                } else {
                     LOGI("Routing audio to Wired Headset\n");
                     sndDevice = SND_DEVICE_HEADSET;
-                }
             } else {
                 if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                     LOGI("Routing audio to Speakerphone\n");
