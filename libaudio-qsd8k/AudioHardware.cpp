@@ -836,6 +836,66 @@ AudioHardware::AudioStreamOutMSM72xx::AudioStreamOutMSM72xx() :
 {
 }
 
+status_t AudioHardware::AudioStreamOutMSM72xx::openDriver()
+{
+    status_t status = NO_INIT;
+
+    // open driver
+    LOGV("open pcm_out driver");
+    status = ::open("/dev/msm_pcm_out", O_RDWR);
+    if (status < 0) {
+        if (errCount++ < 10) {
+            LOGE("Cannot open /dev/msm_pcm_out errno: %d", errno);
+        }
+        goto Error;
+    }
+    mFd = status;
+
+    // configuration
+    LOGV("get config");
+    struct msm_audio_config config;
+    status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
+    if (status < 0) {
+        LOGE("Cannot read pcm_out config");
+        goto Error;
+    }
+
+    LOGV("set pcm_out config");
+    config.channel_count = AudioSystem::popCount(channels());
+    config.sample_rate = sampleRate();
+    config.buffer_size = bufferSize();
+    config.buffer_count = AUDIO_HW_NUM_OUT_BUF;
+    config.type = CODEC_TYPE_PCM;
+    status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
+    if (status < 0) {
+        LOGE("Cannot set config");
+        goto Error;
+    }
+
+    LOGV("buffer_size: %u", config.buffer_size);
+    LOGV("buffer_count: %u", config.buffer_count);
+    LOGV("channel_count: %u", config.channel_count);
+    LOGV("sample_rate: %u", config.sample_rate);
+
+    status = ioctl(mFd, AUDIO_START, 0);
+    if (status < 0) {
+        LOGE("Cannot start pcm playback");
+        goto Error;
+    }
+
+    LOGV("acquire wakelock");
+    acquire_wake_lock(PARTIAL_WAKE_LOCK, kOutputWakelockStr);
+
+    return status;
+
+ Error:
+    if (mFd >= 0) {
+        ::close(mFd);
+        mFd = -1;
+    }
+    return status;
+}
+
 status_t AudioHardware::AudioStreamOutMSM72xx::set(
         AudioHardware* hw, uint32_t devices, int *pFormat, uint32_t *pChannels, uint32_t *pRate)
 {
@@ -866,6 +926,14 @@ status_t AudioHardware::AudioStreamOutMSM72xx::set(
 
     mDevices = devices;
 
+    if (mStandby) {
+        status_t status = openDriver();
+        if (status >= 0) {
+            mStandby = false;
+        }
+    }
+
+
     return NO_ERROR;
 }
 
@@ -882,53 +950,13 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
     const uint8_t* p = static_cast<const uint8_t*>(buffer);
 
     if (mStandby) {
-
-        // open driver
-        LOGV("open pcm_out driver");
-        status = ::open("/dev/msm_pcm_out", O_RDWR);
-        if (status < 0) {
-            if (errCount++ < 10) {
-                LOGE("Cannot open /dev/msm_pcm_out errno: %d", errno);
-            }
+        status = openDriver();
+        if (status >= 0) {
+            mStandby = false;
+        } else {
+            // openDriver returned Error, cleanup
             goto Error;
         }
-        mFd = status;
-
-        // configuration
-        LOGV("get config");
-        struct msm_audio_config config;
-        status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
-        if (status < 0) {
-            LOGE("Cannot read pcm_out config");
-            goto Error;
-        }
-
-        LOGV("set pcm_out config");
-        config.channel_count = AudioSystem::popCount(channels());
-        config.sample_rate = sampleRate();
-        config.buffer_size = bufferSize();
-        config.buffer_count = AUDIO_HW_NUM_OUT_BUF;
-        config.type = CODEC_TYPE_PCM;
-        status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
-        if (status < 0) {
-            LOGE("Cannot set config");
-            goto Error;
-        }
-
-        LOGV("buffer_size: %u", config.buffer_size);
-        LOGV("buffer_count: %u", config.buffer_count);
-        LOGV("channel_count: %u", config.channel_count);
-        LOGV("sample_rate: %u", config.sample_rate);
-
-        status = ioctl(mFd, AUDIO_START, 0);
-        if (status < 0) {
-            LOGE("Cannot start pcm playback");
-            goto Error;
-        }
-
-        LOGV("acquire wakelock");
-        acquire_wake_lock(PARTIAL_WAKE_LOCK, kOutputWakelockStr);
-        mStandby = false;
     }
 
     while (count) {
@@ -946,10 +974,6 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
     return bytes;
 
 Error:
-    if (mFd >= 0) {
-        ::close(mFd);
-        mFd = -1;
-    }
     // Simulate audio output timing in case of error
     usleep(bytes * 1000000 / frameSize() / sampleRate());
 
