@@ -1541,7 +1541,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
                      mFirstread = true;
                      break;
                   }
-	      }
+              }
+              else {
+                 LOGE("Error received from driver err = %d",bytesRead);
+                 break;
+              }
         }
     }
     switch (mFormat) {
