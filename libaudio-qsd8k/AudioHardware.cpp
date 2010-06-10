@@ -1370,6 +1370,16 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
             }
             mFd = status;
 
+        struct msm_audio_stream_config aac_stream_config;
+        if(ioctl(mFd, AUDIO_GET_STREAM_CONFIG, &aac_stream_config))
+        {
+           LOGE(" Error getting buf config param AUDIO_GET_STREAM_CONFIG \n");
+           goto  Error;
+        }
+
+        LOGV("The Config buffer size is %d", aac_stream_config.buffer_size);
+        LOGV("The Config buffer count is %d", aac_stream_config.buffer_count);
+
          /* Config param */
          struct msm_audio_aac_enc_config config;
          if(ioctl(mFd, AUDIO_GET_AAC_ENC_CONFIG, &config))
@@ -1407,6 +1417,15 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         mSampleRate = *pRate;
         mBufferSize = 2048;
         mFormat = *pFormat;
+
+        if (*pChannels & AudioSystem::CHANNEL_IN_MONO)
+        {
+            config.channels = 1;
+        }
+        else if (*pChannels & AudioSystem::CHANNEL_IN_STEREO)
+        {
+            config.channels = 2;
+        }
 
         config.sample_rate = *pRate;
         config.stream_format = AUDIO_AAC_FORMAT_RAW;
@@ -1505,8 +1524,10 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
           p += sizeof(uint16_t);
           if(!(count > 2)) break;
           count -= sizeof(uint16_t);
-          if (count < 512) break;
-          ssize_t bytesRead = ::read(mFd, p, 512);// AAC has fixed frame size of 512 bytes
+          // Optimal frame size 512 to avoid the short read from kernel driver
+          if (count < 512)
+              break;
+          size_t bytesRead = ::read(mFd, p, count);
               if (bytesRead > 0) {
                   LOGV("Number of Bytes read = %d", bytesRead);
                   count -= bytesRead;
