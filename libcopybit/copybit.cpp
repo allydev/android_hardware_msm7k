@@ -185,10 +185,19 @@ static void set_rects(struct copybit_context_t *dev,
     MULDIV(&e->src_rect.x, &e->src_rect.w, src->r - src->l, W);
     MULDIV(&e->src_rect.y, &e->src_rect.h, src->b - src->t, H);
     if (dev->mFlags & COPYBIT_TRANSFORM_FLIP_V) {
-        e->src_rect.y = e->src.height - (e->src_rect.y + e->src_rect.h);
+        if (dev->mFlags & COPYBIT_TRANSFORM_ROT_90) {
+            e->src_rect.x = e->src.width - (e->src_rect.x + e->src_rect.w);
+        }else{
+            e->src_rect.y = e->src.height - (e->src_rect.y + e->src_rect.h);
+        }
     }
+
     if (dev->mFlags & COPYBIT_TRANSFORM_FLIP_H) {
-        e->src_rect.x = e->src.width  - (e->src_rect.x + e->src_rect.w);
+        if (dev->mFlags & COPYBIT_TRANSFORM_ROT_90) {
+            e->src_rect.y = e->src.height - (e->src_rect.y + e->src_rect.h);
+        }else{
+            e->src_rect.x = e->src.width - (e->src_rect.x + e->src_rect.w);
+        }
     }
 }
 
