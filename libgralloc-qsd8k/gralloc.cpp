@@ -43,8 +43,8 @@
 
 /*****************************************************************************/
 
-static SimpleBestFitAllocator sAllocator;
 
+static SimpleBestFitAllocator sAllocator;
 /*****************************************************************************/
 
 struct gralloc_context_t {
@@ -150,7 +150,7 @@ static int gralloc_alloc_framebuffer_locked(alloc_device_t* dev,
 
     // create a "fake" handles for it
     intptr_t vaddr = intptr_t(m->framebuffer->base);
-    private_handle_t* hnd = new private_handle_t(dup(m->framebuffer->fd), size,
+    private_handle_t* hnd = new private_handle_t(dup(m->framebuffer->fd), bufferSize,
             private_handle_t::PRIV_FLAGS_USES_PMEM |
             private_handle_t::PRIV_FLAGS_FRAMEBUFFER);
 
@@ -187,14 +187,9 @@ static int init_pmem_area_locked(private_module_t* m)
     int err = 0;
     int master_fd = open("/dev/pmem", O_RDWR, 0);
     if (master_fd >= 0) {
+        
         size_t size;
-        pmem_region region;
-        if (ioctl(master_fd, PMEM_GET_TOTAL_SIZE, &region) < 0) {
-            LOGE("PMEM_GET_TOTAL_SIZE failed, limp mode");
-            size = 8<<20;   // 8 MiB
-        } else {
-            size = region.len;
-        }
+        size = 23<<20;   // 23 MiB
         sAllocator.setSize(size);
 
         void* base = mmap(0, size, 
@@ -290,7 +285,6 @@ try_ashmem:
                 // now create the "sub-heap"
                 fd = open("/dev/pmem", openFlags, 0);
                 err = fd < 0 ? fd : 0;
-                
                 // and connect to it
                 if (err == 0)
                     err = ioctl(fd, PMEM_CONNECT, m->pmem_master);
@@ -346,28 +340,45 @@ static int gralloc_alloc(alloc_device_t* dev,
         return -EINVAL;
 
     size_t size, alignedw, alignedh;
-
-    alignedw = (w + 31) & ~31;
-    alignedh = (h + 31) & ~31;
-    int bpp = 0;
-    switch (format) {
-        case HAL_PIXEL_FORMAT_RGBA_8888:
-        case HAL_PIXEL_FORMAT_RGBX_8888:
-        case HAL_PIXEL_FORMAT_BGRA_8888:
-            bpp = 4;
-            break;
-        case HAL_PIXEL_FORMAT_RGB_888:
-            bpp = 3;
-            break;
-        case HAL_PIXEL_FORMAT_RGB_565:
-        case HAL_PIXEL_FORMAT_RGBA_5551:
-        case HAL_PIXEL_FORMAT_RGBA_4444:
-            bpp = 2;
-            break;
-        default:
-            return -EINVAL;
+    if (format == HAL_PIXEL_FORMAT_YCbCr_420_SP || 
+            format == HAL_PIXEL_FORMAT_YCbCr_422_SP) 
+    {
+        // FIXME: there is no way to return the alignedh
+        alignedw = (w + 1) & ~1;
+        switch (format) {
+            case HAL_PIXEL_FORMAT_YCbCr_420_SP:
+                size = alignedw * h * 2;
+                break;
+            case HAL_PIXEL_FORMAT_YCbCr_422_SP:
+                alignedh = (h+1) & ~1;
+                size = (alignedw * alignedh) + (w/2 * h/2) * 2;
+                break;
+            default:
+                return -EINVAL;
+        }
+    } else {
+        alignedw = (w + 31) & ~31;
+        alignedh = (h + 31) & ~31;
+        int bpp = 0;
+        switch (format) {
+            case HAL_PIXEL_FORMAT_RGBA_8888:
+            case HAL_PIXEL_FORMAT_RGBX_8888:
+            case HAL_PIXEL_FORMAT_BGRA_8888:
+                bpp = 4;
+                break;
+            case HAL_PIXEL_FORMAT_RGB_888:
+                bpp = 3;
+                break;
+            case HAL_PIXEL_FORMAT_RGB_565:
+            case HAL_PIXEL_FORMAT_RGBA_5551:
+            case HAL_PIXEL_FORMAT_RGBA_4444:
+                bpp = 2;
+                break;
+            default:
+                return -EINVAL;
+        }
+        size = alignedw * alignedh * bpp;
     }
-    size = alignedw * alignedh * bpp;
 
     if ((ssize_t)size <= 0)
         return -EINVAL;

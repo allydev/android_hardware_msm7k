@@ -14,9 +14,9 @@
 # limitations under the License.
 #
 
-common_msm_dirs := libcopybit liblights librpc
-msm7k_dirs := $(common_msm_dirs) boot libgralloc libaudio
-qsd8k_dirs := $(common_msm_dirs) libgralloc-qsd8k libaudio-qsd8k dspcrashd
+common_msm_dirs := libcopybit liblights librpc libgralloc-qsd8k
+msm7k_dirs := $(common_msm_dirs) boot libaudio
+qsd8k_dirs := $(common_msm_dirs) libaudio-qsd8k dspcrashd
 
 ifeq ($(TARGET_BOARD_PLATFORM),msm7k)
   include $(call all-named-subdir-makefiles,$(msm7k_dirs))

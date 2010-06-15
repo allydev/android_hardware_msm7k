@@ -142,7 +142,6 @@ static void set_image(struct mdp_img *img, const struct copybit_image_t *rhs)
     img->offset     = hnd->offset;
 #if defined(COPYBIT_MSM7K)
     if (hnd->flags & private_handle_t::PRIV_FLAGS_USES_GPU) {
-        img->offset += hnd->map_offset;
         img->memory_id = hnd->gpu_fd;
         if (img->format == MDP_RGBA_8888) {
             // msm7201A GPU only supports BGRA_8888 destinations
@@ -199,7 +198,7 @@ static void set_rects(struct copybit_context_t *dev,
 static void set_infos(struct copybit_context_t *dev, struct mdp_blit_req *req) {
     req->alpha = dev->mAlpha;
     req->transp_mask = MDP_TRANSP_NOP;
-    req->flags = dev->mFlags | MDP_BLEND_FG_PREMULT;
+    req->flags = dev->mFlags;
 }
 
 /** copy the bits */
@@ -464,7 +463,7 @@ static int open_copybit(const struct hw_module_t* module, const char* name,
     } else {
         struct fb_fix_screeninfo finfo;
         if (ioctl(ctx->mFD, FBIOGET_FSCREENINFO, &finfo) == 0) {
-            if (strcmp(finfo.id, "msmfb") == 0) {
+            if (strncmp(finfo.id, "msmfb", 5) == 0) {
                 /* Success */
                 status = 0;
             } else {

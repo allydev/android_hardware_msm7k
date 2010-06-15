@@ -11,6 +11,7 @@
 #include <errno.h>
 
 #include <hardware_legacy/power.h>
+#include <poll.h>
 
 #define ANDROID_WAKE_LOCK_NAME "rpc-interface"
 
@@ -131,6 +132,23 @@ static void *cb_context(void *__u)
                     xdr_destroy_common(*svc_xdr);
                 }
                 
+
+                /* Do these checks before the clone */
+                if (client->xdr->in_len < 0) {
+                    E("%08x:%08x xdr->in_len = %i error %s (%d)",
+                        client->xdr->in_len,
+                        client->xdr->x_prog, client->xdr->x_vers,
+                        strerror(errno), errno);
+                    continue;
+                }
+                if (client->xdr->out_next < 0) {
+                    E("%08x:%08x xdr->out_next = %i error %s (%d)",
+                        client->xdr->out_next,
+                        client->xdr->x_prog, client->xdr->x_vers,
+                    strerror(errno), errno);
+                    continue;
+                }
+
                 D("%08x:%08x cloning XDR for "
                   "callback client %08x:%08x.\n",
                   client->xdr->x_prog,
@@ -185,11 +203,27 @@ static void *rx_context(void *__u __attribute__((unused)))
     int n;
     struct timeval tv;
     fd_set rfds;
+    int ret;
+    struct pollfd fd;
+    int timeout = 0;
+
+    memset((void *) &fd, 0, sizeof(fd));
     while(num_clients) {
         pthread_mutex_lock(&rx_mutex);
         rfds = rx_fdset;
         pthread_mutex_unlock(&rx_mutex);
         tv.tv_sec = 0; tv.tv_usec = 500 * 1000;
+
+        ret = poll(&fd, 1, timeout);
+        if (ret > 0) {
+            if (fd.revents & POLLERR) {
+                D("Modem is resetting.\n");
+                timeout = 500;
+                continue;
+            }
+        }
+        timeout = 0;
+
         n = select(max_rxfd + 1, (fd_set *)&rfds, NULL, NULL, &tv);
         if (n < 0) {
             E("select() error %s (%d)\n", strerror(errno), errno);
@@ -219,7 +253,25 @@ static void *rx_context(void *__u __attribute__((unused)))
                             &client->input_xdr_lock);                        
                     }
                     D("%08x:%08x reading data.\n",
-                      client->xdr->x_prog, client->xdr->x_vers);
+                       client->xdr->x_prog, client->xdr->x_vers);
+                    ret = client->xdr->xops->read(client->xdr);
+                    if (ret == FALSE) {
+                        E("%08x:%08x xops->read() error %s (%d)\n",
+                          client->xdr->x_prog, client->xdr->x_vers,
+                        strerror(errno), errno);
+
+                        if (errno == ENETRESET) {
+                            E("%08x:%08x clearing reset.\n",
+                                client->xdr->x_prog, client->xdr->x_vers);
+                                client->xdr->xops->xdr_control(
+                                client->xdr,
+                                RPC_ROUTER_IOCTL_CLEAR_NETRESET, NULL);
+                           fd.fd = client->xdr->fd;
+                        }
+
+                        pthread_mutex_unlock(&client->input_xdr_lock);
+                        continue;
+                    }
                     grabPartialWakeLock();
                     client->xdr->xops->read(client->xdr);
                     client->input_xdr_busy = 1;
@@ -544,6 +596,9 @@ CLIENT *clnt_create(
             vers &= 0xFFFF0000;
 
         pthread_mutex_lock(&rx_mutex);
+
+        /* Implment backwards compatibility */
+        vers = (vers & 0x80000000) ? vers : vers & 0xFFFF0000;
 
         snprintf(name, sizeof(name), "/dev/oncrpc/%08x:%08x",
                  (uint32_t)prog, (int)vers);

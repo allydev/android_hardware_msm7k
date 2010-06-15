@@ -24,7 +24,6 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/ioctl.h>
 
 #include <cutils/log.h>
 #include <cutils/atomic.h>
@@ -32,9 +31,9 @@
 #include <hardware/hardware.h>
 #include <hardware/gralloc.h>
 
-#include <linux/android_pmem.h>
-
 #include "gralloc_priv.h"
+#include <sys/ioctl.h>
+#include <linux/android_pmem.h>
 
 
 // we need this for now because pmem cannot mmap at an offset
@@ -234,12 +233,13 @@ int gralloc_lock(gralloc_module_t const* module,
         // locking for write, store the tid
         hnd->writeOwner = gettid();
     }
-
-    // if requesting sw write for non-framebuffer handles, flag for
-    // flushing at unlock
-    if ((usage & GRALLOC_USAGE_SW_WRITE_MASK) &&
-        !(hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER)) {
-        hnd->flags |= private_handle_t::PRIV_FLAGS_NEEDS_FLUSH;
+    // If this is a sw write and is not a framebuffer, flag it for flushing at unlock
+    if ( (usage & GRALLOC_USAGE_SW_WRITE_MASK) &&
+             !(hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER)) {
+        hnd->swWrite = 1;
+    }
+    else {
+        hnd->swWrite = 0;
     }
 
     if (usage & (GRALLOC_USAGE_SW_READ_MASK | GRALLOC_USAGE_SW_WRITE_MASK)) {
@@ -271,18 +271,6 @@ int gralloc_unlock(gralloc_module_t const* module,
     private_handle_t* hnd = (private_handle_t*)handle;
     int32_t current_value, new_value;
 
-    if (hnd->flags & private_handle_t::PRIV_FLAGS_NEEDS_FLUSH) {
-        struct pmem_region region;
-        int err;
-
-        region.offset = hnd->offset;
-        region.len = hnd->size;
-        err = ioctl(hnd->fd, PMEM_CACHE_FLUSH, &region);
-        LOGE_IF(err < 0, "cannot flush handle %p (offs=%x len=%x)\n",
-                hnd, hnd->offset, hnd->size);
-        hnd->flags &= ~private_handle_t::PRIV_FLAGS_NEEDS_FLUSH;
-    }
-
     do {
         current_value = hnd->lockState;
         new_value = current_value;
@@ -305,6 +293,15 @@ int gralloc_unlock(gralloc_module_t const* module,
     } while (android_atomic_cmpxchg(current_value, new_value, 
             (volatile int32_t*)&hnd->lockState));
 
+    // If this was locked for a software write, send an ioctl to flush the cache
+    if ( hnd->swWrite == 1) {
+        struct pmem_addr pmem_addr;
+        pmem_addr.vaddr = hnd->base;
+        pmem_addr.offset = hnd->offset;
+        pmem_addr.length = hnd->size;
+        ioctl( hnd->fd, PMEM_CLEAN_CACHES,  &pmem_addr);
+    }
+
     return 0;
 }
 
@@ -323,13 +320,6 @@ int gralloc_perform(struct gralloc_module_t const* module,
             size_t size = va_arg(args, size_t);
             size_t offset = va_arg(args, size_t);
             void* base = va_arg(args, void*);
-
-            // validate that it's indeed a pmem buffer
-            pmem_region region;
-            if (ioctl(fd, PMEM_GET_SIZE, &region) < 0) {
-                break;
-            }
-
             native_handle_t** handle = va_arg(args, native_handle_t**);
             private_handle_t* hnd = (private_handle_t*)native_handle_create(
                     private_handle_t::sNumFds, private_handle_t::sNumInts);
