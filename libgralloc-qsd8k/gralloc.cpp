@@ -189,7 +189,11 @@ static int init_pmem_area_locked(private_module_t* m)
     if (master_fd >= 0) {
         
         size_t size;
+#ifndef SF_MEM_ST1X
         size = 23<<20;   // 23 MiB
+#else
+        size = 64<<20;   // 64 MiB
+#endif
         sAllocator.setSize(size);
 
         void* base = mmap(0, size, 
