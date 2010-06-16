@@ -40,6 +40,9 @@ endif
 ifneq ($(TARGET_SIMULATOR),true)
 LOCAL_SHARED_LIBRARIES += libdl
 endif
+ifeq ($(BOARD_HAVE_BLUETOOTH),true)
+LOCAL_SHARED_LIBRARIES += liba2dp libbinder
+endif
 
 LOCAL_C_INCLUDES +=  vendor/qcom-proprietary/mm-audio/7k/audio-alsa
 
