@@ -44,7 +44,7 @@ ifneq ($(TARGET_SIMULATOR),true)
 LOCAL_SHARED_LIBRARIES += libdl
 endif
 ifeq ($(BOARD_HAVE_BLUETOOTH),true)
-LOCAL_SHARED_LIBRARIES += liba2dp
+LOCAL_SHARED_LIBRARIES += liba2dp libbinder
 endif
 
 LOCAL_C_INCLUDES += $(TARGET_OUT_HEADERS)/mm-audio/audio-alsa
