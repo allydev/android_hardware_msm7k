@@ -1,5 +1,6 @@
 #
 # Copyright (C) 2009 The Android Open Source Project
+# Copyright (C) 2010, Code Aurora Forum. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,14 +15,24 @@
 # limitations under the License.
 #
 
-common_msm_dirs := libcopybit liblights librpc libgralloc-qsd8k
-msm7k_dirs := $(common_msm_dirs) boot libaudio
-qsd8k_dirs := $(common_msm_dirs) libaudio-qsd8k dspcrashd
+common_msm_dirs := liblights librpc libgralloc-qsd8k
+msm7k_dirs := $(common_msm_dirs) boot libaudio libcopybit
+qsd8k_dirs := $(common_msm_dirs) libaudio-qsd8k dspcrashd libcopybit
+msm7x30_dirs := $(common_msm_dirs) libaudio
+msm8660_dirs := $(common_msm_dirs)
 
 ifeq ($(TARGET_BOARD_PLATFORM),msm7k)
-  include $(call all-named-subdir-makefiles,$(msm7k_dirs))
+  ifeq "$(findstring msm7630,$(TARGET_PRODUCT))" "msm7630"
+    include $(call all-named-subdir-makefiles,$(msm7x30_dirs))
+  else
+    include $(call all-named-subdir-makefiles,$(msm7k_dirs))
+  endif
 else
   ifeq ($(TARGET_BOARD_PLATFORM),qsd8k)
     include $(call all-named-subdir-makefiles,$(qsd8k_dirs))
+  else
+    ifeq ($(TARGET_BOARD_PLATFORM),msm8660)
+      include $(call all-named-subdir-makefiles,$(msm8660_dirs))
+    endif
   endif
 endif
