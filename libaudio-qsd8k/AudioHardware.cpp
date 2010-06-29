@@ -37,14 +37,18 @@
 #include "AudioHardware.h"
 #include <media/AudioRecord.h>
 
-extern "C" {
-#include "msm_audio.h"
-#include <linux/a1026.h>
-#include <linux/tpa2018d1.h>
-}
+#define DUALMIC_KEY "dualmic_enabled"
+#define TTY_MODE_KEY "tty_mode"
 
 #define LOG_SND_RPC 0  // Set to 1 to log sound RPC's
 #define TX_PATH (1)
+#define AMRNB_DEVICE_IN "/dev/msm_amr_in"
+#define EVRC_DEVICE_IN "/dev/msm_evrc_in"
+#define QCELP_DEVICE_IN "/dev/msm_qcelp_in"
+#define AAC_DEVICE_IN "/dev/msm_aac_in"
+#define AMRNB_FRAME_SIZE 32
+#define EVRC_FRAME_SIZE 23
+#define QCELP_FRAME_SIZE 35
 
 static const uint32_t SND_DEVICE_CURRENT = 256;
 static const uint32_t SND_DEVICE_HANDSET = 0;
@@ -63,31 +67,21 @@ static const uint32_t SND_DEVICE_TTY_HCO = 7;
 static const uint32_t SND_DEVICE_HANDSET_BACK_MIC = 20;
 static const uint32_t SND_DEVICE_SPEAKER_BACK_MIC = 21;
 static const uint32_t SND_DEVICE_NO_MIC_HEADSET_BACK_MIC = 28;
+static const uint32_t SND_DEVICE_HANDSET_DUAL_MIC = 32;
+static const uint32_t SND_DEVICE_SPEAKER_DUAL_MIC = 31;
 static const uint32_t SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC = 30;
+static uint32_t MIKE_ID_SPKR = 0x2B;
+static uint32_t MIKE_ID_HANDSET = 0x2C;
 namespace android {
-static int support_a1026 = 1;
-static bool support_tpa2018d1 = true;
-static int fd_a1026 = -1;
 static int old_pathid = -1;
 static int new_pathid = -1;
-static int curr_out_device = -1;
-static int curr_mic_device = -1;
+static int curr_out_device[2] = {-1,-1};
+static int curr_mic_device[2] = {-1,-1};
 static int voice_started = 0;
 static int fd_fm_device = -1;
 static int stream_volume = -300;
-// use VR mode on inputs: 1 == VR mode enabled when selected, 0 = VR mode disabled when selected
-static int vr_mode_enabled;
-static bool vr_mode_change = false;
-static int vr_uses_ns = 0;
-static int alt_enable = 0;
-static int hac_enable = 0;
-// enable or disable 2-mic noise suppression in call on receiver mode
-static int enable1026 = 1;
-//FIXME add new settings in A1026 driver for an incall no ns mode, based on the current vr no ns
-#define A1026_PATH_INCALL_NO_NS_RECEIVER A1026_PATH_VR_NO_NS_RECEIVER
 
 int errCount = 0;
-static void * acoustic;
 const uint32_t AudioHardware::inputSamplingRates[] = {
         8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000
 };
@@ -99,111 +93,38 @@ static const char kInputWakelockStr[] = "AudioHardwareQSDIn";
 // ----------------------------------------------------------------------------
 
 AudioHardware::AudioHardware() :
-    mA1026Init(false), mInit(false), mMicMute(true),
-    mBluetoothNrec(true),
-    mHACSetting(false),
-    mBluetoothIdTx(0), mBluetoothIdRx(0),
-    mOutput(0),
-    mNoiseSuppressionState(A1026_NS_STATE_AUTO),
-    mVoiceVolume(VOICE_VOLUME_MAX), mTTYMode(TTY_MODE_OFF)
+    mInit(false), mMicMute(true),
+    mBluetoothNrec(true), mBluetoothIdTx(0),
+    mBluetoothIdRx(0), mOutput(0),
+    mDualMicEnabled(false), mTtyMode(TTY_OFF),
+    mVoiceVolume(VOICE_VOLUME_MAX)
 {
-    int (*snd_get_num)();
-    int (*snd_get_bt_endpoint)(msm_bt_endpoint *);
-    int (*set_acoustic_parameters)();
-    int (*set_tpa2018d1_parameters)();
-
-    struct msm_bt_endpoint *ept;
-
-    doA1026_init();
-
-    acoustic =:: dlopen("/system/lib/libhtc_acoustic.so", RTLD_NOW);
-    if (acoustic == NULL ) {
-        LOGE("Could not open libhtc_acoustic.so");
-        /* this is not really an error on non-htc devices... */
-        mNumBTEndpoints = 0;
-        mInit = true;
-        return;
-    }
-    set_acoustic_parameters = (int (*)(void))::dlsym(acoustic, "set_acoustic_parameters");
-    if ((*set_acoustic_parameters) == 0 ) {
-        LOGE("Could not open set_acoustic_parameters()");
-        return;
-    }
-
-    set_tpa2018d1_parameters = (int (*)(void))::dlsym(acoustic, "set_tpa2018d1_parameters");
-    if ((*set_tpa2018d1_parameters) == 0) {
-        LOGI("set_tpa2018d1_parameters() not present");
-        support_tpa2018d1 = false;
-    }
-
-    int rc = set_acoustic_parameters();
-    if (rc < 0) {
-        LOGE("Could not set acoustic parameters to share memory: %d", rc);
-    }
-
-    if (support_tpa2018d1) {
-       rc = set_tpa2018d1_parameters();
-       if (rc < 0) {
-           support_tpa2018d1 = false;
-           LOGE("speaker amplifier tpa2018 is not supported\n");
-       }
-    }
-
-    snd_get_num = (int (*)(void))::dlsym(acoustic, "snd_get_num");
-    if ((*snd_get_num) == 0 ) {
-        LOGE("Could not open snd_get_num()");
-    }
-
-    mNumBTEndpoints = snd_get_num();
-    LOGD("mNumBTEndpoints = %d", mNumBTEndpoints);
-    mBTEndpoints = new msm_bt_endpoint[mNumBTEndpoints];
-    mInit = true;
-    LOGV("constructed %d SND endpoints)", mNumBTEndpoints);
-    ept = mBTEndpoints;
-    snd_get_bt_endpoint = (int (*)(msm_bt_endpoint *))::dlsym(acoustic, "snd_get_bt_endpoint");
-    if ((*snd_get_bt_endpoint) == 0 ) {
-        LOGE("Could not open snd_get_bt_endpoint()");
-        return;
-    }
-    snd_get_bt_endpoint(mBTEndpoints);
-
-    for (int i = 0; i < mNumBTEndpoints; i++) {
-        LOGE("BT name %s (tx,rx)=(%d,%d)", mBTEndpoints[i].name, mBTEndpoints[i].tx, mBTEndpoints[i].rx);
-    }
-
     // reset voice mode in case media_server crashed and restarted while in call
     int fd = open("/dev/msm_audio_ctl", O_RDWR);
     if (fd >= 0) {
         ioctl(fd, AUDIO_STOP_VOICE, NULL);
         close(fd);
     }
-
-    vr_mode_change = false;
-    vr_mode_enabled = 0;
-    enable1026 = 1;
-    char value[PROPERTY_VALUE_MAX];
-    // Check the system property to enable or not the special recording modes
-    property_get("media.a1026.enableA1026", value, "1");
-    enable1026 = atoi(value);
-    LOGV("Enable mode selection for A1026 is %d", enable1026);
-    // Check the system property for which VR mode to use
-    property_get("media.a1026.nsForVoiceRec", value, "0");
-    vr_uses_ns = atoi(value);
-    LOGV("Using Noise Suppression for Voice Rec is %d", vr_uses_ns);
-
-    // Check the system property for enable or not the ALT function
-    property_get("htc.audio.alt.enable", value, "0");
-    alt_enable = atoi(value);
-    LOGV("Enable ALT function: %d", alt_enable);
-
-    // Check the system property for enable or not the HAC function
-    property_get("htc.audio.hac.enable", value, "0");
-    hac_enable = atoi(value);
-    LOGV("Enable HAC function: %d", hac_enable);
-
     mInit = true;
+    static const char *const path = "/system/etc/DualMicControl.txt";
+    FILE *fp;
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+         LOGE("failed to open DualMicControl %s: %s (%d)",
+               path, strerror(errno), errno);
+    }
+    else {
+         if(fgetc(fp) == '0'){
+            MIKE_ID_HANDSET = CAD_HW_DEVICE_ID_HANDSET_DUAL_MIC_BROADSIDE;
+            MIKE_ID_SPKR = CAD_HW_DEVICE_ID_SPKR_PHONE_DUAL_MIC_BROADSIDE;
+         }
+         else{
+             MIKE_ID_HANDSET = CAD_HW_DEVICE_ID_HANDSET_DUAL_MIC_ENDFIRE;
+             MIKE_ID_SPKR = CAD_HW_DEVICE_ID_SPKR_PHONE_DUAL_MIC_ENDFIRE;
+         }
+        fclose(fp);
+    }
 }
-
 AudioHardware::~AudioHardware()
 {
     for (size_t index = 0; index < mInputs.size(); index++) {
@@ -303,15 +224,7 @@ void AudioHardware::closeInputStream(AudioStreamIn* in) {
 
 status_t AudioHardware::setMode(int mode)
 {
-    // VR mode is never used in a call and must be cleared when entering the IN_CALL mode
-    if (mode == AudioSystem::MODE_IN_CALL) {
-        vr_mode_enabled = 0;
-    }
-
-    if (support_tpa2018d1)
-        do_tpa2018_control(mode);
-
-    int prevMode = mMode;
+   int prevMode = mMode;
     status_t status = AudioHardwareBase::setMode(mode);
     if (status == NO_ERROR) {
         // make sure that doAudioRouteOrMute() is called by doRouting()
@@ -382,27 +295,12 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
     String8 key;
     const char BT_NREC_KEY[] = "bt_headset_nrec";
     const char BT_NAME_KEY[] = "bt_headset_name";
-    const char HAC_KEY[] = "HACSetting";
     const char BT_NREC_VALUE_ON[] = "on";
-    const char HAC_VALUE_ON[] = "ON";
 
 
     LOGV("setParameters() %s", keyValuePairs.string());
 
     if (keyValuePairs.length() == 0) return BAD_VALUE;
-
-    if(hac_enable) {
-        key = String8(HAC_KEY);
-        if (param.get(key, value) == NO_ERROR) {
-            if (value == HAC_VALUE_ON) {
-                mHACSetting = true;
-                LOGD("Enable HAC");
-            } else {
-                mHACSetting = false;
-                LOGD("Disable HAC");
-            }
-        }
-    }
 
     key = String8(BT_NREC_KEY);
     if (param.get(key, value) == NO_ERROR) {
@@ -432,75 +330,32 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
         }
         doRouting();
     }
-    key = String8("noise_suppression");
+
+    key = String8(DUALMIC_KEY);
     if (param.get(key, value) == NO_ERROR) {
-        if (support_a1026 == 1) {
-            int noiseSuppressionState;
-            if (value == "off") {
-                noiseSuppressionState = A1026_NS_STATE_OFF;
-            } else if (value == "auto") {
-                noiseSuppressionState = A1026_NS_STATE_AUTO;
-            } else if (value == "far_talk") {
-                noiseSuppressionState = A1026_NS_STATE_FT;
-            } else if (value == "close_talk") {
-                noiseSuppressionState = A1026_NS_STATE_CT;
-            } else {
-                return BAD_VALUE;
-            }
-
-            if (noiseSuppressionState != mNoiseSuppressionState) {
-                if (!mA1026Init) {
-                    LOGW("Audience A1026 not initialized.\n");
-                    return INVALID_OPERATION;
-                }
-
-                mA1026Lock.lock();
-                if (fd_a1026 < 0) {
-                    fd_a1026 = open("/dev/audience_a1026", O_RDWR);
-                    if (fd_a1026 < 0) {
-                        LOGE("Cannot open audience_a1026 device (%d)\n", fd_a1026);
-                        mA1026Lock.unlock();
-                        return -1;
-                    }
-                }
-                LOGV("Setting noise suppression %s", value.string());
-
-                int rc = ioctl(fd_a1026, A1026_SET_NS_STATE, &noiseSuppressionState);
-                if (!rc) {
-                    mNoiseSuppressionState = noiseSuppressionState;
-                } else {
-                    LOGE("Failed to set noise suppression %s", value.string());
-                }
-                close(fd_a1026);
-                fd_a1026 = -1;
-                mA1026Lock.unlock();
-            }
+        if (value == "true") {
+            mDualMicEnabled = true;
+            LOGI("DualMike feature Enabled");
         } else {
-            return INVALID_OPERATION;
+            mDualMicEnabled = false;
+            LOGI("DualMike feature Disabled");
         }
-     }
+        doRouting();
+    }
 
-    key = String8("tty_mode");
+    key = String8(TTY_MODE_KEY);
     if (param.get(key, value) == NO_ERROR) {
-        int ttyMode;
-        if (value == "tty_off") {
-            ttyMode = TTY_MODE_OFF;
-        } else if (value == "tty_full") {
-            ttyMode = TTY_MODE_FULL;
-        } else if (value == "tty_vco") {
-            ttyMode = TTY_MODE_VCO;
-        } else if (value == "tty_hco") {
-            ttyMode = TTY_MODE_HCO;
+        if (value == "full") {
+            mTtyMode = TTY_FULL;
+        } else if (value == "hco") {
+            mTtyMode = TTY_HCO;
+        } else if (value == "vco") {
+            mTtyMode = TTY_VCO;
         } else {
-            return BAD_VALUE;
+            mTtyMode = TTY_OFF;
         }
-
-        if (ttyMode != mTTYMode) {
-            LOGV("new tty mode %d", ttyMode);
-            mTTYMode = ttyMode;
-            doRouting();
-        }
-     }
+        doRouting();
+    }
 
     return NO_ERROR;
 }
@@ -510,28 +365,14 @@ String8 AudioHardware::getParameters(const String8& keys)
     AudioParameter request = AudioParameter(keys);
     AudioParameter reply = AudioParameter();
     String8 value;
-    String8 key;
+    String8 key = String8(DUALMIC_KEY);
 
-    LOGV("getParameters() %s", keys.string());
-
-    key = "noise_suppression";
     if (request.get(key, value) == NO_ERROR) {
-        switch(mNoiseSuppressionState) {
-        case A1026_NS_STATE_OFF:
-            value = "off";
-            break;
-        case A1026_NS_STATE_AUTO:
-            value = "auto";
-            break;
-        case A1026_NS_STATE_FT:
-            value = "far_talk";
-            break;
-        case A1026_NS_STATE_CT:
-            value = "close_talk";
-            break;
-        }
+        value = String8(mDualMicEnabled ? "true" : "false");
         reply.add(key, value);
     }
+
+    LOGV("getParameters() %s", keys.string());
 
     return reply.toString();
 }
@@ -552,7 +393,6 @@ static unsigned calculate_audpre_table_index(unsigned index)
         default:     return -1;
     }
 }
-
 size_t AudioHardware::getBufferSize(uint32_t sampleRate, int channelCount)
 {
     size_t bufSize;
@@ -572,12 +412,18 @@ size_t AudioHardware::getBufferSize(uint32_t sampleRate, int channelCount)
     return bufSize*channelCount;
 }
 
-
 size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int channelCount)
 {
-    if (format != AudioSystem::PCM_16_BIT) {
-        LOGW("getInputBufferSize bad format: %d", format);
-        return 0;
+    switch (format) {
+        case AudioSystem::PCM_16_BIT:
+        case AudioSystem::EVRC:
+        case AudioSystem::AMR_NB:
+        case AudioSystem::QCELP:
+        case AudioSystem::AAC:
+             break;
+        default:
+            LOGW("getInputBufferSize bad format: %d", format);
+            return 0;
     }
     if (channelCount < 1 || channelCount > 2) {
         LOGW("getInputBufferSize bad channel count: %d", channelCount);
@@ -588,7 +434,19 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
         return 0;
     }
 
-    return getBufferSize(sampleRate, channelCount);
+    switch (format) {
+        case AudioSystem::EVRC:
+            return 230*channelCount;
+        case AudioSystem::AMR_NB:
+            return 320*channelCount;
+        case AudioSystem::QCELP:
+            return 350*channelCount;
+        case AudioSystem::AAC:
+            return 2048;
+            break;
+        default:
+            return getBufferSize(sampleRate, channelCount);
+    }
 }
 
 static status_t set_volume_rpc(uint32_t volume)
@@ -619,16 +477,11 @@ status_t AudioHardware::setVoiceVolume(float v)
     }
 
     int vol = lrint(v * VOICE_VOLUME_MAX);
+    LOGD("setVoiceVolume(%f)\n", v);
+    LOGI("Setting in-call volume to %d (available range is 0 to %d)\n", vol, VOICE_VOLUME_MAX);
 
     Mutex::Autolock lock(mLock);
-    if (mHACSetting && hac_enable && mCurSndDevice == (int) SND_DEVICE_HANDSET) {
-        LOGD("HAC enable: Setting in-call volume to maximum.\n");
-        set_volume_rpc(VOICE_VOLUME_MAX);
-    } else {
-        LOGD("setVoiceVolume(%f)\n", v);
-        LOGI("Setting in-call volume to %d (available range is 0 to %d)\n", vol, VOICE_VOLUME_MAX);
-        set_volume_rpc(vol); //always set current device
-    }
+    set_volume_rpc(vol); //always set current device
     mVoiceVolume = vol;
     return NO_ERROR;
 }
@@ -642,122 +495,109 @@ status_t AudioHardware::setMasterVolume(float v)
     return -1;
 }
 
-static status_t do_route_audio_dev_ctrl(uint32_t device, bool inCall, uint32_t rx_acdb_id, uint32_t tx_acdb_id)
+static status_t do_route_audio_dev_ctrl(uint32_t device, bool inCall)
 {
-    uint32_t out_device = 0, mic_device = 0;
-    uint32_t path[2];
+    uint32_t out_device[2] = {0,0}, mic_device[2] = {0,0};
     int fd = 0;
 
     if (device == SND_DEVICE_CURRENT)
         goto Incall;
-
     // hack -- kernel needs to put these in include file
     LOGD("Switching audio device to ");
     if (device == SND_DEVICE_HANDSET) {
-           out_device = HANDSET_SPKR;
-           mic_device = HANDSET_MIC;
+           out_device[0] = HANDSET_SPKR;
+           mic_device[0] = HANDSET_MIC;
            LOGD("Handset");
     } else if ((device  == SND_DEVICE_BT) || (device == SND_DEVICE_BT_EC_OFF)) {
-           out_device = BT_SCO_SPKR;
-           mic_device = BT_SCO_MIC;
+           out_device[0] = BT_SCO_SPKR;
+           mic_device[0] = BT_SCO_MIC;
            LOGD("BT Headset");
     } else if (device == SND_DEVICE_SPEAKER ||
                device == SND_DEVICE_SPEAKER_BACK_MIC) {
-           out_device = SPKR_PHONE_MONO;
-           mic_device = SPKR_PHONE_MIC;
+           out_device[0] = SPKR_PHONE_MONO;
+           mic_device[0] = SPKR_PHONE_MIC;
            LOGD("Speakerphone");
     } else if (device == SND_DEVICE_HEADSET) {
-           out_device = HEADSET_SPKR_STEREO;
-           mic_device = HEADSET_MIC;
+           out_device[0] = HEADSET_SPKR_STEREO;
+           mic_device[0] = HEADSET_MIC;
            LOGD("Stereo Headset");
     } else if (device == SND_DEVICE_HEADSET_AND_SPEAKER) {
-           out_device = SPKR_PHONE_HEADSET_STEREO;
-           mic_device = HEADSET_MIC;
+           out_device[0] = SPKR_PHONE_HEADSET_STEREO;
+           mic_device[0] = HEADSET_MIC;
            LOGD("Stereo Headset + Speaker");
     } else if (device == SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC) {
-           out_device = SPKR_PHONE_HEADSET_STEREO;
-           mic_device = SPKR_PHONE_MIC;
+           out_device[0] = SPKR_PHONE_HEADSET_STEREO;
+           mic_device[0] = SPKR_PHONE_MIC;
            LOGD("Stereo Headset + Speaker and back mic");
     } else if (device == SND_DEVICE_NO_MIC_HEADSET) {
-           out_device = HEADSET_SPKR_STEREO;
-           mic_device = HANDSET_MIC;
+           out_device[0] = HEADSET_SPKR_STEREO;
+           mic_device[0] = HANDSET_MIC;
            LOGD("No microphone Wired Headset");
     } else if (device == SND_DEVICE_NO_MIC_HEADSET_BACK_MIC) {
-           out_device = HEADSET_SPKR_STEREO;
-           mic_device = SPKR_PHONE_MIC;
+           out_device[0] = HEADSET_SPKR_STEREO;
+           mic_device[0] = SPKR_PHONE_MIC;
            LOGD("No microphone Wired Headset and back mic");
     } else if (device == SND_DEVICE_HANDSET_BACK_MIC) {
-           out_device = HANDSET_SPKR;
-           mic_device = SPKR_PHONE_MIC;
+           out_device[0] = HANDSET_SPKR;
+           mic_device[0] = SPKR_PHONE_MIC;
            LOGD("Handset and back mic");
     } else if (device == SND_DEVICE_FM_HEADSET) {
-           out_device = FM_HEADSET;
-           mic_device = HEADSET_MIC;
+           out_device[0] = FM_HEADSET;
+           mic_device[0] = HEADSET_MIC;
            LOGD("Stereo FM headset");
     } else if (device == SND_DEVICE_FM_SPEAKER) {
-           out_device = FM_SPKR;
-           mic_device = HEADSET_MIC;
+           out_device[0] = FM_SPKR;
+           mic_device[0] = HEADSET_MIC;
            LOGD("Stereo FM speaker");
-    } else if (device == SND_DEVICE_CARKIT) {
-           out_device = BT_SCO_SPKR;
-           mic_device = BT_SCO_MIC;
-           LOGD("Carkit");
     } else if (device == SND_DEVICE_TTY_FULL) {
-        out_device = TTY_HEADSET_SPKR;
-        mic_device = TTY_HEADSET_MIC;
-        LOGD("TTY FULL headset");
+           out_device[0] = TTY_HEADSET_SPKR;
+           mic_device[0] = TTY_HEADSET_MIC;
+           LOGD("TTY headset in FULL mode\n");
     } else if (device == SND_DEVICE_TTY_VCO) {
-        out_device = TTY_HEADSET_SPKR;
-        mic_device = SPKR_PHONE_MIC;
-        LOGD("TTY VCO headset");
+           out_device[0] = TTY_HEADSET_SPKR;
+           mic_device[0] = HANDSET_MIC;
+           LOGD("TTY headset in VCO mode\n");
     } else if (device == SND_DEVICE_TTY_HCO) {
-        out_device = SPKR_PHONE_MONO;
-        mic_device = TTY_HEADSET_MIC;
-        LOGD("TTY HCO headset");
+           out_device[0] = HANDSET_SPKR;
+           mic_device[0] = TTY_HEADSET_MIC;
+           LOGD("TTY headset in HCO mode\n");
+    } else if (device == SND_DEVICE_HANDSET_DUAL_MIC) {
+           out_device[0] = HANDSET_SPKR;
+           mic_device[0] = HANDSET_DUALMIC;
+           mic_device[1] = MIKE_ID_HANDSET;
+           LOGD("Handset with DualMike");
+    } else if (device == SND_DEVICE_SPEAKER_DUAL_MIC) {
+           out_device[0] = SPKR_PHONE_MONO;
+           mic_device[0] = SPKR_DUALMIC;
+           mic_device[1] = MIKE_ID_SPKR;
+           LOGD("Speakerphone with DualMike");
+    } else if (device == SND_DEVICE_CARKIT) {
+           out_device[0] = BT_SCO_SPKR;
+           mic_device[0] = BT_SCO_MIC;
+           LOGD("Carkit");
     } else {
-        LOGE("unknown device %d", device);
-        return -1;
+           LOGE("unknown device %d", device);
+           return -1;
     }
-
-#if 0 //Add for FM support
-    if (out_device == FM_HEADSET ||
-        out_device == FM_SPKR) {
-        if (fd_fm_device < 0) {
-            fd_fm_device = open("/dev/msm_htc_fm", O_RDWR);
-            if (fd_fm_device < 0) {
-                LOGE("Cannot open msm_htc_fm device");
-                return -1;
-            }
-            LOGD("Opened msm_htc_fm for FM radio");
-        }
-    } else if (fd_fm_device >= 0) {
-        close(fd_fm_device);
-        fd_fm_device = -1;
-        LOGD("Closed msm_htc_fm after FM radio");
-    }
-#endif
 
     fd = open("/dev/msm_audio_ctl", O_RDWR);
     if (fd < 0)        {
        LOGE("Cannot open msm_audio_ctl");
        return -1;
     }
-    path[0] = out_device;
-    path[1] = rx_acdb_id;
-    if (ioctl(fd, AUDIO_SWITCH_DEVICE, &path)) {
+    if (ioctl(fd, AUDIO_SWITCH_DEVICE, &out_device)) {
        LOGE("Cannot switch audio device");
        close(fd);
        return -1;
     }
-    path[0] = mic_device;
-    path[1] = tx_acdb_id;
-    if (ioctl(fd, AUDIO_SWITCH_DEVICE, &path)) {
+    if (ioctl(fd, AUDIO_SWITCH_DEVICE, &mic_device)) {
        LOGE("Cannot switch mic device");
        close(fd);
        return -1;
     }
-    curr_out_device = out_device;
-    curr_mic_device = mic_device;
+    curr_out_device[0] = out_device[0];
+    curr_mic_device[0] = mic_device[0];
+    curr_mic_device[1] = mic_device[1];
 
 Incall:
     if (inCall == true && !voice_started) {
@@ -769,12 +609,10 @@ Incall:
                 return -1;
             }
         }
-        path[0] = rx_acdb_id;
-        path[1] = tx_acdb_id;
-        if (ioctl(fd, AUDIO_START_VOICE, &path)) {
-            LOGE("Cannot start voice");
-            close(fd);
-            return -1;
+        if (ioctl(fd, AUDIO_START_VOICE, NULL)) {
+               LOGE("Cannot start voice");
+               close(fd);
+               return -1;
         }
         LOGD("Voice Started!!");
         voice_started = 1;
@@ -805,55 +643,13 @@ Incall:
 // always call with mutex held
 status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
 {
-    uint32_t rx_acdb_id = 0;
-    uint32_t tx_acdb_id = 0;
-
-    if (support_a1026 == 1)
-            doAudience_A1026_Control(mMode, mRecordState, device);
-
-    if (device == (uint32_t)SND_DEVICE_BT) {
+    if (device == (uint32_t)SND_DEVICE_BT || device == (uint32_t)SND_DEVICE_CARKIT) {
         if (!mBluetoothNrec) {
             device = SND_DEVICE_BT_EC_OFF;
         }
     }
 
-
-    if (device == (int) SND_DEVICE_BT
-            || device == (int) SND_DEVICE_BT_EC_OFF) {
-        if (mBluetoothIdTx != 0) {
-            rx_acdb_id = mBluetoothIdRx;
-            tx_acdb_id = mBluetoothIdTx;
-        } else {
-            /* use default BT entry defined in AudioBTID.csv */
-            rx_acdb_id = mBTEndpoints[0].rx;
-            tx_acdb_id = mBTEndpoints[0].tx;
-            LOGD("Update ACDB ID to default BT setting\n");
-        }
-    } else if (device == (int) SND_DEVICE_CARKIT) {
-        if (mBluetoothIdTx != 0) {
-            rx_acdb_id = mBluetoothIdRx;
-            tx_acdb_id = mBluetoothIdTx;
-        } else {
-            /* use default carkit entry defined in AudioBTID.csv */
-            rx_acdb_id = mBTEndpoints[1].rx;
-            tx_acdb_id = mBTEndpoints[1].tx;
-            LOGD("Update ACDB ID to default carkit setting");
-        }
-    } else if (mMode == AudioSystem::MODE_IN_CALL
-               && hac_enable && mHACSetting &&
-               device == (int) SND_DEVICE_HANDSET) {
-        LOGE("Update acdb id to hac profile.");
-        rx_acdb_id = ACDB_ID_HAC_HANDSET_SPKR;
-        tx_acdb_id = ACDB_ID_HAC_HANDSET_MIC;
-    } else {
-        if (!checkOutputStandby() || mMode != AudioSystem::MODE_IN_CALL)
-            rx_acdb_id = getACDB(MOD_PLAY, device);
-        if (mRecordState)
-            tx_acdb_id = getACDB(MOD_REC, device);
-    }
-    LOGV("doAudioRouteOrMute: rx acdb %d, tx acdb %d\n", rx_acdb_id, tx_acdb_id);
-
-    return do_route_audio_dev_ctrl(device, mMode == AudioSystem::MODE_IN_CALL, rx_acdb_id, tx_acdb_id);
+    return do_route_audio_dev_ctrl(device, mMode == AudioSystem::MODE_IN_CALL);
 }
 
 status_t AudioHardware::get_mMode(void)
@@ -872,536 +668,72 @@ status_t AudioHardware::set_mRecordState(bool onoff)
     return 0;
 }
 
-status_t AudioHardware::get_batt_temp(int *batt_temp)
-{
-    int fd, len;
-    const char *fn =
-            "/sys/devices/platform/ds2784-battery/power_supply/battery/temp";
-    char get_batt_temp[6] = { 0 };
-
-    if ((fd = open(fn, O_RDONLY)) < 0) {
-        LOGE("%s: cannot open %s: %s\n", __FUNCTION__, fn, strerror(errno));
-        return UNKNOWN_ERROR;
-    }
-
-    if ((len = read(fd, get_batt_temp, sizeof(get_batt_temp))) <= 1) {
-        LOGE("read battery temp fail: %s\n", strerror(errno));
-        close(fd);
-        return BAD_VALUE;
-    }
-
-    *batt_temp = strtol(get_batt_temp, NULL, 10);
-    close(fd);
-    return NO_ERROR;
-}
-
-/*
- * Note: upon exiting doA1026_init(), fd_a1026 will be -1
- */
-status_t AudioHardware::doA1026_init(void)
-{
-    struct a1026img fwimg;
-    char char_tmp = 0;
-    unsigned char local_vpimg_buf[A1026_MAX_FW_SIZE], *ptr = local_vpimg_buf;
-    int rc = 0, fw_fd = -1;
-    ssize_t nr;
-    size_t remaining;
-    struct stat fw_stat;
-
-    static const char *const fn = "/system/etc/vpimg";
-    static const char *const path = "/dev/audience_a1026";
-
-    if (fd_a1026 < 0)
-        fd_a1026 = open(path, O_RDWR | O_NONBLOCK, 0);
-
-    if (fd_a1026 < 0) {
-        LOGE("Cannot open %s %d\n", path, fd_a1026);
-        support_a1026 = 0;
-        goto open_drv_err;
-    }
-
-    fw_fd = open(fn, O_RDONLY);
-    if (fw_fd < 0) {
-        LOGE("Fail to open %s\n", fn);
-        goto ld_img_error;
-    } else LOGI("open %s success\n", fn);
-
-    rc = fstat(fw_fd, &fw_stat);
-    if (rc < 0) {
-        LOGE("Cannot stat file %s: %s\n", fn, strerror(errno));
-        goto ld_img_error;
-    }
-
-    remaining = (int)fw_stat.st_size;
-
-    LOGI("Firmware %s size %d\n", fn, remaining);
-
-    if (remaining > sizeof(local_vpimg_buf)) {
-        LOGE("File %s size %d exceeds internal limit %d\n",
-             fn, remaining, sizeof(local_vpimg_buf));
-        goto ld_img_error;
-    }
-
-    while (remaining) {
-        nr = read(fw_fd, ptr, remaining);
-        if (nr < 0) {
-            LOGE("Error reading firmware: %s\n", strerror(errno));
-            goto ld_img_error;
-        }
-        else if (!nr) {
-            if (remaining)
-                LOGW("EOF reading firmware %s while %d bytes remain\n",
-                     fn, remaining);
-            break;
-        }
-        remaining -= nr;
-        ptr += nr;
-    }
-
-    close (fw_fd);
-    fw_fd = -1;
-
-    fwimg.buf = local_vpimg_buf;
-    fwimg.img_size = (int)(fw_stat.st_size - remaining);
-    LOGI("Total %d bytes put to user space buffer.\n", fwimg.img_size);
-
-    rc = ioctl(fd_a1026, A1026_BOOTUP_INIT, &fwimg);
-    if (!rc) {
-        LOGI("audience_a1026 init OK\n");
-        mA1026Init = 1;
-    } else
-        LOGE("audience_a1026 init failed\n");
-
-ld_img_error:
-    if (fw_fd >= 0)
-        close(fw_fd);
-    close(fd_a1026);
-open_drv_err:
-    fd_a1026 = -1;
-    return rc;
-}
-
 status_t AudioHardware::get_snd_dev(void)
 {
     Mutex::Autolock lock(mLock);
     return mCurSndDevice;
 }
 
-uint32_t AudioHardware::getACDB(int mode, int device)
-{
-    uint32_t acdb_id = 0;
-    int batt_temp = 0;
-    if (mMode == AudioSystem::MODE_IN_CALL) {
-        LOGD("skip update ACDB due to in-call");
-        return 0;
-    }
-
-    if (mode == MOD_PLAY) {
-        switch (device) {
-            case SND_DEVICE_HEADSET:
-            case SND_DEVICE_NO_MIC_HEADSET:
-            case SND_DEVICE_NO_MIC_HEADSET_BACK_MIC:
-            case SND_DEVICE_FM_HEADSET:
-                acdb_id = ACDB_ID_HEADSET_PLAYBACK;
-                break;
-            case SND_DEVICE_SPEAKER:
-            case SND_DEVICE_FM_SPEAKER:
-            case SND_DEVICE_SPEAKER_BACK_MIC:
-                acdb_id = ACDB_ID_SPKR_PLAYBACK;
-                if(alt_enable) {
-                    LOGD("Enable ALT for speaker\n");
-                    if (get_batt_temp(&batt_temp) == NO_ERROR) {
-                        if (batt_temp < 50)
-                            acdb_id = ACDB_ID_ALT_SPKR_PLAYBACK;
-                        LOGD("ALT batt temp = %d\n", batt_temp);
-                    }
-                }
-                break;
-            case SND_DEVICE_HEADSET_AND_SPEAKER:
-            case SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC:
-                acdb_id = ACDB_ID_HEADSET_RINGTONE_PLAYBACK;
-                break;
-            default:
-                break;
-        }
-    } else if (mode == MOD_REC) {
-        switch (device) {
-            case SND_DEVICE_HEADSET:
-            case SND_DEVICE_FM_HEADSET:
-            case SND_DEVICE_FM_SPEAKER:
-            case SND_DEVICE_HEADSET_AND_SPEAKER:
-                acdb_id = ACDB_ID_EXT_MIC_REC;
-                break;
-            case SND_DEVICE_HANDSET:
-            case SND_DEVICE_NO_MIC_HEADSET:
-            case SND_DEVICE_SPEAKER:
-                if (vr_mode_enabled == 0) {
-                    acdb_id = ACDB_ID_INT_MIC_REC;
-                } else {
-                    acdb_id = ACDB_ID_INT_MIC_VR;
-                }
-                break;
-            case SND_DEVICE_SPEAKER_BACK_MIC:
-            case SND_DEVICE_NO_MIC_HEADSET_BACK_MIC:
-            case SND_DEVICE_HANDSET_BACK_MIC:
-            case SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC:
-                acdb_id = ACDB_ID_CAMCORDER;
-                break;
-            default:
-                break;
-        }
-    }
-    LOGV("getACDB, return ID %d\n", acdb_id);
-    return acdb_id;
-}
-
-status_t AudioHardware::do_tpa2018_control(int mode)
-{
-    if (curr_out_device == HANDSET_SPKR ||
-        curr_out_device == SPKR_PHONE_MONO ||
-        curr_out_device == HEADSET_SPKR_STEREO ||
-        curr_out_device == SPKR_PHONE_HEADSET_STEREO ||
-        curr_out_device == FM_SPKR) {
-
-	int fd, rc;
-        int retry = 3;
-
-        switch (mode) {
-        case AudioSystem::MODE_NORMAL:
-            mode = TPA2018_MODE_PLAYBACK;
-            break;
-        case AudioSystem::MODE_RINGTONE:
-            mode = TPA2018_MODE_RINGTONE;
-            break;
-        case AudioSystem::MODE_IN_CALL:
-            mode = TPA2018_MODE_VOICE_CALL;
-            break;
-        default:
-            return 0;
-        }
-
-        fd = open("/dev/tpa2018d1", O_RDWR);
-        if (fd < 0) {
-            LOGE("can't open /dev/tpa2018d1 %d", fd);
-            return -1;
-        }
-
-        do {
-            rc = ioctl(fd, TPA2018_SET_MODE, &mode);
-            if (!rc)
-                break;
-        } while (--retry);
-
-        if (rc < 0) {
-            LOGE("ioctl TPA2018_SET_MODE failed: %s", strerror(errno));
-        } else
-            LOGD("Update TPA2018_SET_MODE to mode %d success", mode);
-
-        close(fd);
-    }
-    return 0;
-}
-
-status_t AudioHardware::doAudience_A1026_Control(int Mode, bool Record, uint32_t Routes)
-{
-    int rc = 0;
-    int retry = 4;
-
-    if (!mA1026Init) {
-        LOGW("Audience A1026 not initialized.\n");
-        return NO_INIT;
-    }
-
-    mA1026Lock.lock();
-    if (fd_a1026 < 0) {
-        fd_a1026 = open("/dev/audience_a1026", O_RDWR);
-        if (fd_a1026 < 0) {
-            LOGE("Cannot open audience_a1026 device (%d)\n", fd_a1026);
-            mA1026Lock.unlock();
-            return -1;
-        }
-    }
-
-    if ((Mode < AudioSystem::MODE_CURRENT) || (Mode >= AudioSystem::NUM_MODES)) {
-        LOGW("Illegal value: doAudience_A1026_Control(%d, %u, %u)", Mode, Record, Routes);
-        mA1026Lock.unlock();
-        return BAD_VALUE;
-    }
-
-    if (Mode == AudioSystem::MODE_IN_CALL) {
-        if (Record == 1) {
-	    switch (Routes) {
-	        case SND_DEVICE_HANDSET:
-	        case SND_DEVICE_NO_MIC_HEADSET:
-	            //TODO: what do we do for camcorder when in call?
-	        case SND_DEVICE_NO_MIC_HEADSET_BACK_MIC:
-	        case SND_DEVICE_HANDSET_BACK_MIC:
-	        case SND_DEVICE_TTY_VCO:
-	            if (enable1026) {
-                    new_pathid = A1026_PATH_INCALL_RECEIVER;
-                    LOGV("A1026 control: new path is A1026_PATH_INCALL_RECEIVER");
-	            } else {
-	                new_pathid = A1026_PATH_INCALL_NO_NS_RECEIVER;
-	                LOGV("A1026 control: new path is A1026_PATH_INCALL_NO_NS_RECEIVER");
-	            }
-	            break;
-	        case SND_DEVICE_HEADSET:
-	        case SND_DEVICE_HEADSET_AND_SPEAKER:
-	        case SND_DEVICE_FM_HEADSET:
-	        case SND_DEVICE_FM_SPEAKER:
-	        case SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC:
-	            new_pathid = A1026_PATH_INCALL_HEADSET;
-	            LOGV("A1026 control: new path is A1026_PATH_INCALL_HEADSET");
-	            break;
-	        case SND_DEVICE_SPEAKER:
-	            //TODO: what do we do for camcorder when in call?
-	        case SND_DEVICE_SPEAKER_BACK_MIC:
-	            new_pathid = A1026_PATH_INCALL_SPEAKER;
-	            LOGV("A1026 control: new path is A1026_PATH_INCALL_SPEAKER");
-	            break;
-	        case SND_DEVICE_BT:
-	        case SND_DEVICE_BT_EC_OFF:
-	        case SND_DEVICE_CARKIT:
-	            new_pathid = A1026_PATH_INCALL_BT;
-	            LOGV("A1026 control: new path is A1026_PATH_INCALL_BT");
-	            break;
-	        case SND_DEVICE_TTY_HCO:
-	        case SND_DEVICE_TTY_FULL:
-	            new_pathid = A1026_PATH_INCALL_TTY;
-	            LOGV("A1026 control: new path is A1026_PATH_INCALL_TTY");
-	            break;
-	        default:
-	            break;
-            }
-       } else {
-           switch (Routes) {
-	        case SND_DEVICE_HANDSET:
-	        case SND_DEVICE_NO_MIC_HEADSET:
-	        case SND_DEVICE_TTY_VCO:
-	            if (enable1026) {
-	                new_pathid = A1026_PATH_INCALL_RECEIVER; /* NS CT mode, Dual MIC */
-                    LOGV("A1026 control: new path is A1026_PATH_INCALL_RECEIVER");
-	            } else {
-	                new_pathid = A1026_PATH_INCALL_NO_NS_RECEIVER;
-	                LOGV("A1026 control: new path is A1026_PATH_INCALL_NO_NS_RECEIVER");
-	            }
-	            break;
-	        case SND_DEVICE_HEADSET:
-	        case SND_DEVICE_HEADSET_AND_SPEAKER:
-	        case SND_DEVICE_FM_HEADSET:
-	        case SND_DEVICE_FM_SPEAKER:
-	            new_pathid = A1026_PATH_INCALL_HEADSET; /* NS disable, Headset MIC */
-	            LOGV("A1026 control: new path is A1026_PATH_INCALL_HEADSET");
-	            break;
-	        case SND_DEVICE_SPEAKER:
-	            new_pathid = A1026_PATH_INCALL_SPEAKER; /* NS FT mode, Main MIC */
-	            LOGV("A1026 control: new path is A1026_PATH_INCALL_SPEAKER");
-	            break;
-	        case SND_DEVICE_BT:
-	        case SND_DEVICE_BT_EC_OFF:
-	        case SND_DEVICE_CARKIT:
-	            new_pathid = A1026_PATH_INCALL_BT; /* QCOM NS, BT MIC */
-	            LOGV("A1026 control: new path is A1026_PATH_INCALL_BT");
-	            break;
-	        case SND_DEVICE_TTY_HCO:
-	        case SND_DEVICE_TTY_FULL:
-	            new_pathid = A1026_PATH_INCALL_TTY;
-	            LOGV("A1026 control: new path is A1026_PATH_INCALL_TTY");
-	            break;
-	        default:
-	            break;
-            }
-       }
-    } else if (Record == 1) {
-        switch (Routes) {
-        case SND_DEVICE_SPEAKER:
-            // default output is speaker, recording from phone mic, user RECEIVER configuration
-        case SND_DEVICE_HANDSET:
-        case SND_DEVICE_NO_MIC_HEADSET:
-	        if (vr_mode_enabled) {
-	            if (vr_uses_ns) {
-	                new_pathid = A1026_PATH_VR_NS_RECEIVER;
-	                LOGV("A1026 control: new path is A1026_PATH_VR_NS_RECEIVER");
-	            } else {
-	                new_pathid = A1026_PATH_VR_NO_NS_RECEIVER;
-	                LOGV("A1026 control: new path is A1026_PATH_VR_NO_NS_RECEIVER");
-	            }
-	        } else {
-	            new_pathid = A1026_PATH_RECORD_RECEIVER; /* INT-MIC Recording: NS disable, Main MIC */
-                LOGV("A1026 control: new path is A1026_PATH_RECORD_RECEIVER");
-	        }
-	        break;
-        case SND_DEVICE_HEADSET:
-        case SND_DEVICE_HEADSET_AND_SPEAKER:
-        case SND_DEVICE_FM_HEADSET:
-        case SND_DEVICE_FM_SPEAKER:
-	        if (vr_mode_enabled) {
-	            if (vr_uses_ns) {
-	                new_pathid = A1026_PATH_VR_NS_HEADSET;
-	                LOGV("A1026 control: new path is A1026_PATH_VR_NS_HEADSET");
-	            } else {
-	                new_pathid = A1026_PATH_VR_NO_NS_HEADSET;
-	                LOGV("A1026 control: new path is A1026_PATH_VR_NO_NS_HEADSET");
-	            }
-	        } else {
-	            new_pathid = A1026_PATH_RECORD_HEADSET; /* EXT-MIC Recording: NS disable, Headset MIC */
-	            LOGV("A1026 control: new path is A1026_PATH_RECORD_HEADSET");
-	        }
-	        break;
-        case SND_DEVICE_SPEAKER_BACK_MIC:
-        case SND_DEVICE_NO_MIC_HEADSET_BACK_MIC:
-        case SND_DEVICE_HANDSET_BACK_MIC:
-        case SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC:
-	        new_pathid = A1026_PATH_CAMCORDER; /* CAM-Coder: NS FT mode, Back MIC */
-	        LOGV("A1026 control: new path is A1026_PATH_CAMCORDER");
-	        break;
-        case SND_DEVICE_BT:
-        case SND_DEVICE_BT_EC_OFF:
-        case SND_DEVICE_CARKIT:
-	        if (vr_mode_enabled) {
-	            if (vr_uses_ns) {
-	                new_pathid = A1026_PATH_VR_NS_BT;
-	                LOGV("A1026 control: new path is A1026_PATH_VR_NS_BT");
-	            } else {
-	                new_pathid = A1026_PATH_VR_NO_NS_BT;
-	                LOGV("A1026 control: new path is A1026_PATH_VR_NO_NS_BT");
-	            }
-	        } else {
-	            new_pathid = A1026_PATH_RECORD_BT; /* BT MIC */
-	            LOGV("A1026 control: new path is A1026_PATH_RECORD_BT");
-	        }
-	        break;
-        default:
-	        break;
-        }
-    }
-    else {
-        switch (Routes) {
-        case SND_DEVICE_BT:
-        case SND_DEVICE_BT_EC_OFF:
-        case SND_DEVICE_CARKIT:
-            new_pathid = A1026_PATH_RECORD_BT; /* BT MIC */
-            LOGV("A1026 control: new path is A1026_PATH_RECORD_BT");
-            break;
-        default:
-            new_pathid = A1026_PATH_SUSPEND;
-            break;
-        }
-    }
-
-    if (old_pathid != new_pathid) {
-        //LOGI("A1026: do ioctl(A1026_SET_CONFIG) to %d\n", new_pathid);
-        do {
-            rc = ioctl(fd_a1026, A1026_SET_CONFIG, &new_pathid);
-            if (!rc) {
-                old_pathid = new_pathid;
-                break;
-            }
-        } while (--retry);
-
-        if (rc < 0) {
-            LOGE("A1026 do hard reset to recover from error!\n");
-            rc = doA1026_init(); /* A1026 needs to do hard reset! */
-            if (!rc) {
-                /* after doA1026_init(), fd_a1026 is -1*/
-                fd_a1026 = open("/dev/audience_a1026", O_RDWR);
-                if (fd_a1026 < 0) {
-                    LOGE("A1026 Fatal Error: unable to open A1026 after hard reset\n");
-                } else {
-                    rc = ioctl(fd_a1026, A1026_SET_CONFIG, &new_pathid);
-                    if (!rc) {
-                        old_pathid = new_pathid;
-                    } else {
-                        LOGE("A1026 Fatal Error: unable to A1026_SET_CONFIG after hard reset\n");
-                    }
-                }
-            } else
-                LOGE("A1026 Fatal Error: Re-init A1026 Failed\n");
-        }
-    }
-
-    if (fd_a1026 >= 0) {
-        close(fd_a1026);
-    }
-    fd_a1026 = -1;
-    mA1026Lock.unlock();
-
-    return rc;
-}
-
-
 status_t AudioHardware::doRouting()
 {
     Mutex::Autolock lock(mLock);
     uint32_t outputDevices = mOutput->devices();
-    status_t ret = NO_ERROR;
     AudioStreamInMSM72xx *input = getActiveInput_l();
     uint32_t inputDevice = (input == NULL) ? 0 : input->devices();
+    status_t ret = NO_ERROR;
     int sndDevice = -1;
 
-    if (mMode == AudioSystem::MODE_IN_CALL && mTTYMode != TTY_MODE_OFF) {
-        if ((outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) ||
-            (outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADPHONE)) {
-            switch (mTTYMode) {
-            case TTY_MODE_FULL:
-                sndDevice = SND_DEVICE_TTY_FULL;
-                break;
-            case TTY_MODE_VCO:
-                sndDevice = SND_DEVICE_TTY_VCO;
-                break;
-            case TTY_MODE_HCO:
-                sndDevice = SND_DEVICE_TTY_HCO;
-                break;
-            }
-        }
-    }
-
-    if (sndDevice == -1 && inputDevice != 0) {
+    if (inputDevice != 0) {
         LOGI("do input routing device %x\n", inputDevice);
-        if (inputDevice & AudioSystem::DEVICE_IN_BLUETOOTH_SCO_HEADSET) {
-            LOGI("Routing audio to Bluetooth PCM\n");
-            sndDevice = SND_DEVICE_BT;
-        } else if (inputDevice & AudioSystem::DEVICE_OUT_BLUETOOTH_SCO_CARKIT) {
-            LOGI("Routing audio to Bluetooth car kit\n");
-            sndDevice = SND_DEVICE_CARKIT;
-        } else if (inputDevice & AudioSystem::DEVICE_IN_WIRED_HEADSET) {
-            if ((outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) &&
-                    (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
-                        LOGI("Routing audio to Wired Headset and Speaker\n");
-                        sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
+        // ignore routing device information when we start a recording in voice
+        // call
+        // Recording will happen through currently active tx device
+        if(inputDevice == AudioSystem::DEVICE_IN_VOICE_CALL)
+            return NO_ERROR;
+            if (inputDevice & AudioSystem::DEVICE_IN_BLUETOOTH_SCO_HEADSET) {
+                LOGI("Routing audio to Bluetooth PCM\n");
+                sndDevice = SND_DEVICE_BT;
+            } else if (inputDevice & AudioSystem::DEVICE_OUT_BLUETOOTH_SCO_CARKIT) {
+               LOGI("Routing audio to Bluetooth car kit\n");
+               sndDevice = SND_DEVICE_CARKIT;
+            } else if (inputDevice & AudioSystem::DEVICE_IN_WIRED_HEADSET) {
+                if ((outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET) &&
+                        (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER)) {
+                            LOGI("Routing audio to Wired Headset and Speaker\n");
+                            sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER;
+                } else {
+                    LOGI("Routing audio to Wired Headset\n");
+                    sndDevice = SND_DEVICE_HEADSET;
+                }
+            } else if (inputDevice & AudioSystem::DEVICE_IN_BACK_MIC) {
+                if (outputDevices & (AudioSystem:: DEVICE_OUT_WIRED_HEADSET) &&
+                       (outputDevices & AudioSystem:: DEVICE_OUT_SPEAKER)) {
+                    LOGI("Routing audio to Wired Headset and Speaker with back mic\n");
+                    sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC;
+                } else if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
+                    LOGI("Routing audio to Speakerphone with back mic\n");
+                    sndDevice = SND_DEVICE_SPEAKER_BACK_MIC;
+                } else if (outputDevices == AudioSystem::DEVICE_OUT_EARPIECE) {
+                    LOGI("Routing audio to Handset with back mic\n");
+                    sndDevice = SND_DEVICE_HANDSET_BACK_MIC;
+                } else {
+                    LOGI("Routing audio to Headset with back mic\n");
+                    sndDevice = SND_DEVICE_NO_MIC_HEADSET_BACK_MIC;
+                }
             } else {
-                LOGI("Routing audio to Wired Headset\n");
-                sndDevice = SND_DEVICE_HEADSET;
+                if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
+                    LOGI("Routing audio to Speakerphone\n");
+                    sndDevice = SND_DEVICE_SPEAKER;
+                } else if (outputDevices == AudioSystem::DEVICE_OUT_WIRED_HEADPHONE) {
+                    LOGI("Routing audio to Speakerphone\n");
+                    sndDevice = SND_DEVICE_NO_MIC_HEADSET;
+                } else {
+                    LOGI("Routing audio to Handset\n");
+                    sndDevice = SND_DEVICE_HANDSET;
+                }
             }
-        } else if (inputDevice & AudioSystem::DEVICE_IN_BACK_MIC) {
-            if (outputDevices & (AudioSystem:: DEVICE_OUT_WIRED_HEADSET) &&
-                   (outputDevices & AudioSystem:: DEVICE_OUT_SPEAKER)) {
-                LOGI("Routing audio to Wired Headset and Speaker with back mic\n");
-                sndDevice = SND_DEVICE_HEADSET_AND_SPEAKER_BACK_MIC;
-            } else if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
-                LOGI("Routing audio to Speakerphone with back mic\n");
-                sndDevice = SND_DEVICE_SPEAKER_BACK_MIC;
-            } else if (outputDevices == AudioSystem::DEVICE_OUT_EARPIECE) {
-                LOGI("Routing audio to Handset with back mic\n");
-                sndDevice = SND_DEVICE_HANDSET_BACK_MIC;
-            } else {
-                LOGI("Routing audio to Headset with back mic\n");
-                sndDevice = SND_DEVICE_NO_MIC_HEADSET_BACK_MIC;
-            }
-        } else {
-            if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
-                LOGI("Routing audio to Speakerphone\n");
-                sndDevice = SND_DEVICE_SPEAKER;
-            } else if (outputDevices == AudioSystem::DEVICE_OUT_WIRED_HEADPHONE) {
-                LOGI("Routing audio to Speakerphone\n");
-                sndDevice = SND_DEVICE_NO_MIC_HEADSET;
-            } else {
-                LOGI("Routing audio to Handset\n");
-                sndDevice = SND_DEVICE_HANDSET;
-            }
-        }
+        // if inputDevice == 0, restore output routing
     }
-    // if inputDevice == 0, restore output routing
 
     if (sndDevice == -1) {
         if (outputDevices & (outputDevices - 1)) {
@@ -1411,10 +743,22 @@ status_t AudioHardware::doRouting()
             }
         }
 
-        if (outputDevices &
-                (AudioSystem::DEVICE_OUT_BLUETOOTH_SCO | AudioSystem::DEVICE_OUT_BLUETOOTH_SCO_HEADSET)) {
-                    LOGI("Routing audio to Bluetooth PCM\n");
-                    sndDevice = SND_DEVICE_BT;
+        if ((mTtyMode != TTY_OFF) && (mMode == AudioSystem::MODE_IN_CALL) &&
+                (outputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET)) {
+            if (mTtyMode == TTY_FULL) {
+                LOGI("Routing audio to TTY FULL Mode\n");
+                sndDevice = SND_DEVICE_TTY_FULL;
+            } else if (mTtyMode == TTY_VCO) {
+                LOGI("Routing audio to TTY VCO Mode\n");
+                sndDevice = SND_DEVICE_TTY_VCO;
+            } else if (mTtyMode == TTY_HCO) {
+                LOGI("Routing audio to TTY HCO Mode\n");
+                sndDevice = SND_DEVICE_TTY_HCO;
+            }
+        } else if (outputDevices &
+                   (AudioSystem::DEVICE_OUT_BLUETOOTH_SCO | AudioSystem::DEVICE_OUT_BLUETOOTH_SCO_HEADSET)) {
+            LOGI("Routing audio to Bluetooth PCM\n");
+            sndDevice = SND_DEVICE_BT;
         } else if (outputDevices & AudioSystem::DEVICE_OUT_BLUETOOTH_SCO_CARKIT) {
             LOGI("Routing audio to Bluetooth PCM\n");
             sndDevice = SND_DEVICE_CARKIT;
@@ -1442,16 +786,21 @@ status_t AudioHardware::doRouting()
         }
     }
 
-    if ((vr_mode_change) || (sndDevice != -1 && sndDevice != mCurSndDevice)) {
+    if (mDualMicEnabled && mMode == AudioSystem::MODE_IN_CALL) {
+        if (sndDevice == SND_DEVICE_HANDSET) {
+            LOGI("Routing audio to handset with DualMike enabled\n");
+            sndDevice = SND_DEVICE_HANDSET_DUAL_MIC;
+        } else if (sndDevice == SND_DEVICE_SPEAKER) {
+            LOGI("Routing audio to speakerphone with DualMike enabled\n");
+            sndDevice = SND_DEVICE_SPEAKER_DUAL_MIC;
+        }
+    }
+
+    if ((sndDevice != -1 && sndDevice != mCurSndDevice)) {
         ret = doAudioRouteOrMute(sndDevice);
         mCurSndDevice = sndDevice;
         if (mMode == AudioSystem::MODE_IN_CALL) {
-            if (mHACSetting && hac_enable && mCurSndDevice == (int) SND_DEVICE_HANDSET) {
-                LOGD("HAC enable: Setting in-call volume to maximum.\n");
-                set_volume_rpc(VOICE_VOLUME_MAX);
-            } else {
-                set_volume_rpc(mVoiceVolume);
-            }
+            set_volume_rpc(mVoiceVolume);
         }
     }
 
@@ -1537,6 +886,66 @@ AudioHardware::AudioStreamOutMSM72xx::AudioStreamOutMSM72xx() :
 {
 }
 
+status_t AudioHardware::AudioStreamOutMSM72xx::openDriver()
+{
+    status_t status = NO_INIT;
+
+    // open driver
+    LOGV("open pcm_out driver");
+    status = ::open("/dev/msm_pcm_out", O_RDWR);
+    if (status < 0) {
+        if (errCount++ < 10) {
+            LOGE("Cannot open /dev/msm_pcm_out errno: %d", errno);
+        }
+        goto Error;
+    }
+    mFd = status;
+
+    // configuration
+    LOGV("get config");
+    struct msm_audio_config config;
+    status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
+    if (status < 0) {
+        LOGE("Cannot read pcm_out config");
+        goto Error;
+    }
+
+    LOGV("set pcm_out config");
+    config.channel_count = AudioSystem::popCount(channels());
+    config.sample_rate = mSampleRate;
+    config.buffer_size = mBufferSize;
+    config.buffer_count = AUDIO_HW_NUM_OUT_BUF;
+    config.type = CODEC_TYPE_PCM;
+    status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
+    if (status < 0) {
+        LOGE("Cannot set config");
+        goto Error;
+    }
+
+    LOGV("buffer_size: %u", config.buffer_size);
+    LOGV("buffer_count: %u", config.buffer_count);
+    LOGV("channel_count: %u", config.channel_count);
+    LOGV("sample_rate: %u", config.sample_rate);
+
+    status = ioctl(mFd, AUDIO_START, 0);
+    if (status < 0) {
+        LOGE("Cannot start pcm playback");
+        goto Error;
+    }
+
+    LOGV("acquire output wakelock");
+    acquire_wake_lock(PARTIAL_WAKE_LOCK, kOutputWakelockStr);
+
+    return status;
+
+ Error:
+    if (mFd >= 0) {
+        ::close(mFd);
+        mFd = -1;
+    }
+    return status;
+}
+
 status_t AudioHardware::AudioStreamOutMSM72xx::set(
         AudioHardware* hw, uint32_t devices, int *pFormat, uint32_t *pChannels, uint32_t *pRate)
 {
@@ -1570,6 +979,14 @@ status_t AudioHardware::AudioStreamOutMSM72xx::set(
     mSampleRate = lRate;
     mBufferSize = hw->getBufferSize(lRate, AudioSystem::popCount(lChannels));
 
+    if (mStandby) {
+        status_t status = openDriver();
+        if (status >= 0) {
+            mStandby = false;
+        }
+    }
+
+
     return NO_ERROR;
 }
 
@@ -1586,60 +1003,13 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
     const uint8_t* p = static_cast<const uint8_t*>(buffer);
 
     if (mStandby) {
-
-        // open driver
-        LOGV("open pcm_out driver");
-        status = ::open("/dev/msm_pcm_out", O_RDWR);
-        if (status < 0) {
-            if (errCount++ < 10) {
-                LOGE("Cannot open /dev/msm_pcm_out errno: %d", errno);
-            }
+        status = openDriver();
+        if (status >= 0) {
+            mStandby = false;
+        } else {
+            // openDriver returned Error, cleanup
             goto Error;
         }
-        mFd = status;
-
-        // configuration
-        LOGV("get config");
-        struct msm_audio_config config;
-        status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
-        if (status < 0) {
-            LOGE("Cannot read pcm_out config");
-            goto Error;
-        }
-
-        LOGV("set pcm_out config");
-        config.channel_count = AudioSystem::popCount(channels());
-        config.sample_rate = mSampleRate;
-        config.buffer_size = mBufferSize;
-        config.buffer_count = AUDIO_HW_NUM_OUT_BUF;
-        config.codec_type = CODEC_TYPE_PCM;
-        status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
-        if (status < 0) {
-            LOGE("Cannot set config");
-            goto Error;
-        }
-
-        LOGV("buffer_size: %u", config.buffer_size);
-        LOGV("buffer_count: %u", config.buffer_count);
-        LOGV("channel_count: %u", config.channel_count);
-        LOGV("sample_rate: %u", config.sample_rate);
-
-        uint32_t acdb_id = mHardware->getACDB(MOD_PLAY, mHardware->get_snd_dev());
-        status = ioctl(mFd, AUDIO_START, &acdb_id);
-        if (status < 0) {
-            LOGE("Cannot start pcm playback");
-            goto Error;
-        }
-
-        status = ioctl(mFd, AUDIO_SET_VOLUME, &stream_volume);
-        if (status < 0) {
-            LOGE("Cannot start pcm playback");
-            goto Error;
-        }
-
-        LOGV("acquire output wakelock");
-        acquire_wake_lock(PARTIAL_WAKE_LOCK, kOutputWakelockStr);
-        mStandby = false;
     }
 
     while (count) {
@@ -1657,10 +1027,6 @@ ssize_t AudioHardware::AudioStreamOutMSM72xx::write(const void* buffer, size_t b
     return bytes;
 
 Error:
-    if (mFd >= 0) {
-        ::close(mFd);
-        mFd = -1;
-    }
     // Simulate audio output timing in case of error
     usleep(bytes * 1000000 / frameSize() / sampleRate());
 
@@ -1771,10 +1137,25 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         AudioHardware* hw, uint32_t devices, int *pFormat, uint32_t *pChannels, uint32_t *pRate,
         AudioSystem::audio_in_acoustics acoustic_flags)
 {
-    if (pFormat == 0 || *pFormat != AUDIO_HW_IN_FORMAT) {
-        *pFormat = AUDIO_HW_IN_FORMAT;
+    status_t status = NO_ERROR;
+
+    switch (*pFormat) {
+        case AUDIO_HW_IN_FORMAT:
+        case AudioSystem::EVRC:
+        case AudioSystem::AMR_NB:
+        case AudioSystem::QCELP:
+        case AudioSystem::AAC:
+             break;
+        default:
+            *pFormat = AUDIO_HW_IN_FORMAT;
+             return BAD_VALUE;
+    }
+
+    if((*pFormat == AudioSystem::AAC) && (*pChannels & (AudioSystem::CHANNEL_IN_VOICE_DNLINK |  AudioSystem::CHANNEL_IN_VOICE_UPLINK))) {
+        LOGE("voice call recording in AAC format does not support");
         return BAD_VALUE;
     }
+
     if (pRate == 0) {
         return BAD_VALUE;
     }
@@ -1784,78 +1165,346 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
         return BAD_VALUE;
     }
 
-    if (pChannels == 0 || (*pChannels != AudioSystem::CHANNEL_IN_MONO &&
-        *pChannels != AudioSystem::CHANNEL_IN_STEREO)) {
+    if (pChannels == 0 || (*pChannels & (AudioSystem::CHANNEL_IN_MONO | AudioSystem::CHANNEL_IN_STEREO)) == 0) {
         *pChannels = AUDIO_HW_IN_CHANNELS;
         return BAD_VALUE;
     }
 
     mHardware = hw;
+    mBufferSize = hw->getBufferSize(*pRate, AudioSystem::popCount(*pChannels));
 
-    LOGV("AudioStreamInMSM72xx::set(%d, %d, %u)", *pFormat, *pChannels, *pRate);
+    LOGV("AudioStreamInMSM72xx::set(%d, %x, %u)", *pFormat, *pChannels, *pRate);
     if (mFd >= 0) {
         LOGE("Audio record already open");
         return -EPERM;
     }
+    struct msm_voicerec_mode voc_rec_cfg;
+    switch (*pFormat)
+    {
+        case AUDIO_HW_IN_FORMAT:
+        {
+           // open audio input device
+           status = ::open("/dev/msm_pcm_in", O_RDWR);
+           if (status < 0) {
+              LOGE("Cannot open /dev/msm_pcm_in errno: %d", errno);
+              goto Error;
+           }
+           mFd = status;
 
-    // open audio input device
-    status_t status = ::open("/dev/msm_pcm_in", O_RDWR);
-    if (status < 0) {
-        LOGE("Cannot open /dev/msm_pcm_in errno: %d", errno);
-        goto Error;
-    }
-    mFd = status;
-    mBufferSize = hw->getBufferSize(*pRate, AudioSystem::popCount(*pChannels));
+          // configuration
+          LOGV("get config");
+          struct msm_audio_config config;
+          status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
+          if (status < 0) {
+             LOGE("Cannot read config");
+             goto Error;
+          }
 
-    // configuration
-    LOGV("get config");
-    struct msm_audio_config config;
-    status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot read config");
-        goto Error;
-    }
+          LOGV("set config");
+          config.channel_count = AudioSystem::popCount(*pChannels);
+          config.sample_rate = *pRate;
+          config.buffer_size = mBufferSize;
+          config.buffer_count = 2;
+          config.type = CODEC_TYPE_PCM;
+          status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
+          if (status < 0) {
+             LOGE("Cannot set config");
+             if (ioctl(mFd, AUDIO_GET_CONFIG, &config) == 0) {
+                 if (config.channel_count == 1) {
+                    *pChannels = AudioSystem::CHANNEL_IN_MONO;
+                 } else {
+                    *pChannels = AudioSystem::CHANNEL_IN_STEREO;
+                 }
+                *pRate = config.sample_rate;
+             }
+             goto Error;
+          }
 
-    LOGV("set config");
-    config.channel_count = AudioSystem::popCount(*pChannels);
-    config.sample_rate = *pRate;
-    config.buffer_size = mBufferSize;
-    config.buffer_count = 2;
-    config.codec_type = CODEC_TYPE_PCM;
-    status = ioctl(mFd, AUDIO_SET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot set config");
-        if (ioctl(mFd, AUDIO_GET_CONFIG, &config) == 0) {
-            if (config.channel_count == 1) {
-                *pChannels = AudioSystem::CHANNEL_IN_MONO;
-            } else {
-                *pChannels = AudioSystem::CHANNEL_IN_STEREO;
-            }
-            *pRate = config.sample_rate;
+          LOGV("confirm config");
+          status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
+          if (status < 0) {
+              LOGE("Cannot read config");
+              goto Error;
+          }
+          LOGV("buffer_size: %u", config.buffer_size);
+          LOGV("buffer_count: %u", config.buffer_count);
+          LOGV("channel_count: %u", config.channel_count);
+          LOGV("sample_rate: %u", config.sample_rate);
+
+          mDevices = devices;
+          mFormat = AUDIO_HW_IN_FORMAT;
+          mChannels = *pChannels;
+          mSampleRate = config.sample_rate;
+          mBufferSize = config.buffer_size;
+          break;
         }
-        goto Error;
-    }
+        case AudioSystem::AMR_NB:
+        {
+          LOGI("Recording format: AMR_NB");
+          // open amrnb input device
+          status = ::open(AMRNB_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open amrnb device for read");
+              goto Error;
+          }
+          mFd = status;
+          mDevices = devices;
+          mChannels = *pChannels;
 
-    LOGV("confirm config");
-    status = ioctl(mFd, AUDIO_GET_CONFIG, &config);
-    if (status < 0) {
-        LOGE("Cannot read config");
-        goto Error;
-    }
-    LOGV("buffer_size: %u", config.buffer_size);
-    LOGV("buffer_count: %u", config.buffer_count);
-    LOGV("channel_count: %u", config.channel_count);
-    LOGV("sample_rate: %u", config.sample_rate);
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                   (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                   LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
 
-    mDevices = devices;
-    mFormat = AUDIO_HW_IN_FORMAT;
-    mChannels = *pChannels;
-    mSampleRate = config.sample_rate;
-    mBufferSize = config.buffer_size;
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
+
+          mSampleRate =8000;
+          mFormat = *pFormat;
+          mBufferSize = 320;
+          struct msm_audio_amrnb_enc_config_v2 amrnb_enc_cfg;
+
+          if (ioctl(mFd, AUDIO_GET_AMRNB_ENC_CONFIG, &amrnb_enc_cfg))
+          {
+            LOGE("Error: AUDIO_GET_AMRNB_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config band mode is %d", amrnb_enc_cfg.band_mode);
+          LOGV("The Config dtx_enable is %d", amrnb_enc_cfg.dtx_enable);
+
+          amrnb_enc_cfg.band_mode =  7;
+          amrnb_enc_cfg.dtx_enable = 0;
+
+          if (ioctl(mFd, AUDIO_SET_AMRNB_ENC_CONFIG, &amrnb_enc_cfg))
+          {
+            LOGE("Error: AUDIO_SET_AMRNB_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+          break;
+        }
+        case AudioSystem::EVRC:
+        {
+          LOGI("Recording format: EVRC");
+          // open evrc input device
+          status = ::open(EVRC_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open evrc device for read");
+              goto Error;
+          }
+          mFd = status;
+          mDevices = devices;
+          mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                   (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                   LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
+
+          mSampleRate =8000;
+          mFormat = *pFormat;
+          mBufferSize = 230;
+          struct msm_audio_evrc_enc_config evrc_enc_cfg;
+
+          if (ioctl(mFd, AUDIO_GET_EVRC_ENC_CONFIG, &evrc_enc_cfg))
+          {
+            LOGE("Error: AUDIO_GET_EVRC_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config cdma_rate is %d", evrc_enc_cfg.cdma_rate);
+          LOGV("The Config min_bit_rate is %d", evrc_enc_cfg.min_bit_rate);
+          LOGV("The Config max_bit_rate is %d", evrc_enc_cfg.max_bit_rate);
+
+          evrc_enc_cfg.min_bit_rate = 4; //CDMA Full rate
+          evrc_enc_cfg.max_bit_rate = 4; //CDMA Full rate
+
+          if (ioctl(mFd, AUDIO_SET_EVRC_ENC_CONFIG, &evrc_enc_cfg))
+          {
+            LOGE("Error: AUDIO_SET_EVRC_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+          break;
+        }
+        case AudioSystem::QCELP:
+        {
+          LOGI("Recording format: QCELP");
+          // open qcelp input device
+          status = ::open(QCELP_DEVICE_IN, O_RDWR);
+          if (status < 0) {
+              LOGE("Cannot open qcelp device for read");
+              goto Error;
+          }
+          mFd = status;
+          mDevices = devices;
+          mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                   (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                   LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
+
+          mSampleRate =8000;
+          mFormat = *pFormat;
+          mBufferSize = 350;
+          struct msm_audio_qcelp_enc_config qcelp_enc_cfg;
+
+          if (ioctl(mFd, AUDIO_GET_QCELP_ENC_CONFIG, &qcelp_enc_cfg))
+          {
+            LOGE("Error: AUDIO_GET_QCELP_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+
+          LOGV("The Config cdma_rate is %d", qcelp_enc_cfg.cdma_rate);
+          LOGV("The Config min_bit_rate is %d", qcelp_enc_cfg.min_bit_rate);
+          LOGV("The Config max_bit_rate is %d", qcelp_enc_cfg.max_bit_rate);
+
+          qcelp_enc_cfg.min_bit_rate = 4; //CDMA Full rate
+          qcelp_enc_cfg.max_bit_rate = 4; //CDMA Full rate
+
+          if (ioctl(mFd, AUDIO_SET_QCELP_ENC_CONFIG, &qcelp_enc_cfg))
+          {
+            LOGE("Error: AUDIO_SET_QCELP_ENC_CONFIG failed\n");
+            goto  Error;
+          }
+          break;
+        }
+        case AudioSystem::AAC:
+        {
+           // open AAC input device
+           status = ::open(AAC_DEVICE_IN, O_RDWR);
+           if (status < 0) {
+               LOGE("Cannot open AAC input  device for read");
+               goto Error;
+           }
+           mFd = status;
+
+          struct msm_audio_stream_config aac_stream_config;
+          if(ioctl(mFd, AUDIO_GET_STREAM_CONFIG, &aac_stream_config))
+          {
+             LOGE(" Error getting buf config param AUDIO_GET_STREAM_CONFIG \n");
+             goto  Error;
+          }
+
+          LOGV("The Config buffer size is %d", aac_stream_config.buffer_size);
+          LOGV("The Config buffer count is %d", aac_stream_config.buffer_count);
+
+          /* Config param */
+          struct msm_audio_aac_enc_config config;
+          if(ioctl(mFd, AUDIO_GET_AAC_ENC_CONFIG, &config))
+          {
+             LOGE(" Error getting buf config param AUDIO_GET_CONFIG \n");
+             goto  Error;
+          }
+
+          LOGV("The Config Sample rate is %d", config.sample_rate);
+
+          mDevices = devices;
+          mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                   (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                   LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
+
+          mSampleRate = *pRate;
+          mBufferSize = 2048;
+          mFormat = *pFormat;
+
+          if (*pChannels & AudioSystem::CHANNEL_IN_MONO)
+          {
+             config.channels = 1;
+          }
+          else if (*pChannels & AudioSystem::CHANNEL_IN_STEREO)
+          {
+             config.channels = 2;
+          }
+
+          config.sample_rate = *pRate;
+          config.stream_format = AUDIO_AAC_FORMAT_RAW;
+
+          if (ioctl(mFd, AUDIO_SET_AAC_ENC_CONFIG, &config)) {
+            LOGE(" Error in setting config of msm_pcm_in device \n");
+            goto Error;
+          }
+          break;
+      }
+    }
 
     //mHardware->setMicMute_nosync(false);
     mState = AUDIO_INPUT_OPENED;
 
+    // Need to start AUDIO before close is called, even if we are not ready to
+    // read. This is the due to our hardware requirement (Cannot Open -> Close,
+    // have to follow Open -> Start -> Close).
+    mHardware->set_mRecordState(1);
+    if (ioctl(mFd, AUDIO_START, 0)) {
+        LOGE("Error starting record");
+        return -1;
+    }
+
+    mState = AUDIO_INPUT_STARTED;
     return NO_ERROR;
 
 Error:
@@ -1878,65 +1527,190 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
     if (!mHardware) return -1;
 
     size_t count = bytes;
+    size_t  aac_framesize= bytes;
     uint8_t* p = static_cast<uint8_t*>(buffer);
+    uint32_t* recogPtr = (uint32_t *)p;
+    uint16_t* frameCountPtr;
+    uint16_t* frameSizePtr;
 
     if (mState < AUDIO_INPUT_OPENED) {
-        Mutex::Autolock lock(mHardware->mLock);
-        if (set(mHardware, mDevices, &mFormat, &mChannels, &mSampleRate, mAcoustics) != NO_ERROR) {
+        AudioHardware *hw = mHardware;
+        hw->mLock.lock();
+        status_t status = set(hw, mDevices, &mFormat, &mChannels, &mSampleRate, mAcoustics);
+        hw->mLock.unlock();
+
+        if (status != NO_ERROR) {
             return -1;
         }
+        mFirstread = false;
     }
 
     if (mState < AUDIO_INPUT_STARTED) {
-        mState = AUDIO_INPUT_STARTED;
         mHardware->set_mRecordState(1);
-        // make sure a1026 config is re-applied even is input device is not changed
-        mHardware->clearCurDevice();
-        mHardware->doRouting();
-
-        LOGV("acquire input wakelock");
-        acquire_wake_lock(PARTIAL_WAKE_LOCK, kInputWakelockStr);
-        uint32_t acdb_id = mHardware->getACDB(MOD_REC, mHardware->get_snd_dev());
-        if (ioctl(mFd, AUDIO_START, &acdb_id)) {
+        if (ioctl(mFd, AUDIO_START, 0)) {
             LOGE("Error starting record");
-            standby();
             return -1;
         }
+        LOGI("AUDIO_START: start kernel pcm_in driver.");
+        mState = AUDIO_INPUT_STARTED;
     }
 
-    while (count) {
-        ssize_t bytesRead = ::read(mFd, buffer, count);
-        if (bytesRead >= 0) {
-            count -= bytesRead;
-            p += bytesRead;
-        } else {
-            if (errno != EAGAIN) return bytesRead;
-            mRetryCount++;
-            LOGW("EAGAIN - retrying");
+    if (mFormat == AudioSystem::AAC) {
+       if (bytes < 512) {
+        LOGE("Error, the buffer size passed is not compatible %d", bytes);
+        return -1;
+       }
+    }
+    bytes = 0;
+    if (mFormat == AudioSystem::AAC)
+    {
+        *((uint32_t*)recogPtr) = 0x51434F4D ;// ('Q','C','O', 'M') Number to identify format as AAC by higher layers
+        recogPtr++;
+        frameCountPtr = (uint16_t*)recogPtr;
+        *frameCountPtr = 0;
+        p += 3*sizeof(uint16_t);
+        count -= 3*sizeof(uint16_t);
+    }
+    if (mFormat == AudioSystem::AAC)
+    {
+       while (count > 0) {
+          frameSizePtr = (uint16_t *)p;
+          p += sizeof(uint16_t);
+          if(!(count > 2)) break;
+          count -= sizeof(uint16_t);
+          // Optimal frame size 512 to avoid the short read from kernel driver
+          if (count < 512)
+              break;
+          size_t bytesRead = ::read(mFd, p, count);
+              if (bytesRead > 0) {
+                  LOGV("Number of Bytes read = %d", bytesRead);
+                  count -= bytesRead;
+                  p += bytesRead;
+                  bytes += bytesRead;
+                  LOGV("Total Number of Bytes read = %d", bytes);
+                  *frameSizePtr =  bytesRead;
+                  (*frameCountPtr)++;
+                  if(!mFirstread)
+                  {
+                     mFirstread = true;
+                     break;
+                  }
+              }
+              else {
+                 LOGE("Error received from driver err = %d",bytesRead);
+                 break;
+              }
         }
     }
+    switch (mFormat) {
+        case AUDIO_HW_IN_FORMAT:
+        while (count) {
+            ssize_t bytesRead = ::read(mFd, buffer, count);
+            if (bytesRead >= 0) {
+                count -= bytesRead;
+                p += bytesRead;
+                bytes += bytesRead;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
+            }
+            else
+            {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+        break;
+
+        case AudioSystem::AMR_NB:
+        while (count) {
+            ssize_t bytesRead = ::read(mFd, buffer, AMRNB_FRAME_SIZE);
+            if (bytesRead >= 0) {
+                p += AMRNB_FRAME_SIZE;
+                count -= AMRNB_FRAME_SIZE;
+                bytes += AMRNB_FRAME_SIZE;
+                buffer += AMRNB_FRAME_SIZE;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
+            }
+            else {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+        break;
+
+       case AudioSystem::EVRC:
+         while (count) {
+            ssize_t bytesRead = ::read(mFd, buffer, EVRC_FRAME_SIZE);
+            if (bytesRead >= 0) {
+                p += EVRC_FRAME_SIZE;
+                count -= EVRC_FRAME_SIZE;
+                bytes += EVRC_FRAME_SIZE;
+                buffer += EVRC_FRAME_SIZE;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
+            }
+            else {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+        break;
+
+       case AudioSystem::QCELP:
+          while (count) {
+            ssize_t bytesRead = ::read(mFd, buffer, QCELP_FRAME_SIZE);
+            if (bytesRead >= 0) {
+                p += QCELP_FRAME_SIZE;
+                count -= QCELP_FRAME_SIZE;
+                bytes += QCELP_FRAME_SIZE;
+                buffer += QCELP_FRAME_SIZE;
+                if(!mFirstread)
+                {
+                   mFirstread = true;
+                   break;
+                }
+            }
+            else {
+                if (errno != EAGAIN) return bytesRead;
+                mRetryCount++;
+                LOGW("EAGAIN - retrying");
+            }
+        }
+        break;
+    }
+    if (mFormat == AudioSystem::AAC)
+        return aac_framesize;
     return bytes;
 }
 
 status_t AudioHardware::AudioStreamInMSM72xx::standby()
 {
+    if (mHardware) {
+        mHardware->set_mRecordState(0);
+    }
+
+    if (!mHardware) return -1;
     if (mState > AUDIO_INPUT_CLOSED) {
         if (mFd >= 0) {
             ::close(mFd);
             mFd = -1;
         }
+        //mHardware->checkMicMute();
         mState = AUDIO_INPUT_CLOSED;
-        LOGV("release input wakelock");
-        release_wake_lock(kInputWakelockStr);
     }
-
-    if (!mHardware) return -1;
-
-    mHardware->set_mRecordState(0);
-    // make sure a1026 config is re-applied even is input device is not changed
-    mHardware->clearCurDevice();
-    mHardware->doRouting();
-
     LOGI("AudioHardware PCM record is going to standby.");
     return NO_ERROR;
 }
@@ -1972,20 +1746,9 @@ status_t AudioHardware::AudioStreamInMSM72xx::setParameters(const String8& keyVa
     AudioParameter param = AudioParameter(keyValuePairs);
     status_t status = NO_ERROR;
     int device;
-    String8 key = String8(KEY_A1026_VR_MODE);
-    int enabled;
+    String8 key = String8(AudioParameter::keyRouting);
     LOGV("AudioStreamInMSM72xx::setParameters() %s", keyValuePairs.string());
 
-    // reading voice recognition mode parameter
-    if (param.getInt(key, enabled) == NO_ERROR) {
-        LOGV("set vr_mode_enabled to %d", enabled);
-        vr_mode_change = (vr_mode_enabled != enabled);
-        vr_mode_enabled = enabled;
-        param.remove(key);
-    }
-
-    // reading routing parameter
-    key = String8(AudioParameter::keyRouting);
     if (param.getInt(key, device) == NO_ERROR) {
         LOGV("set input routing %x", device);
         if (device & (device - 1)) {

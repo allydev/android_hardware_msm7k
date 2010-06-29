@@ -25,6 +25,14 @@
 
 #include <hardware_legacy/AudioHardwareBase.h>
 
+extern "C" {
+#include <linux/msm_audio.h>
+#include <linux/msm_audio_qcp.h>
+#include <linux/msm_audio_aac.h>
+#include <linux/msm_audio_amrnb.h>
+}
+
+
 namespace android {
 
 // ----------------------------------------------------------------------------
@@ -37,6 +45,8 @@ namespace android {
 #define ADSP_AUDIO_DEVICE_ID_BT_SCO_MIC		0x1081518
 #define ADSP_AUDIO_DEVICE_ID_TTY_HEADSET_MIC	0x108151b
 #define ADSP_AUDIO_DEVICE_ID_I2S_MIC		0x1089bf3
+#define ADSP_AUDIO_DEVICE_ID_HANDSET_DUAL_MIC     0x108f9c3
+#define ADSP_AUDIO_DEVICE_ID_SPKR_PHONE_DUAL_MIC  0x108f9c5
 
 /* Special loopback pseudo device to be paired with an RX device */
 /* with usage ADSP_AUDIO_DEVICE_USAGE_MIXED_PCM_LOOPBACK */
@@ -72,9 +82,9 @@ namespace android {
 #define FM_HEADSET                 ADSP_AUDIO_DEVICE_ID_HEADSET_SPKR_STEREO
 #define FM_SPKR	                   ADSP_AUDIO_DEVICE_ID_SPKR_PHONE_MONO
 #define SPKR_PHONE_HEADSET_STEREO  ADSP_AUDIO_DEVICE_ID_SPKR_PHONE_MONO_W_MONO_HEADSET
+#define HANDSET_DUALMIC            ADSP_AUDIO_DEVICE_ID_HANDSET_DUAL_MIC
+#define SPKR_DUALMIC               ADSP_AUDIO_DEVICE_ID_SPKR_PHONE_DUAL_MIC
 
-#define ACDB_ID_HAC_HANDSET_MIC 107
-#define ACDB_ID_HAC_HANDSET_SPKR 207
 #define ACDB_ID_EXT_MIC_REC 307
 #define ACDB_ID_HEADSET_PLAYBACK 407
 #define ACDB_ID_HEADSET_RINGTONE_PLAYBACK 408
@@ -82,7 +92,6 @@ namespace android {
 #define ACDB_ID_CAMCORDER   508
 #define ACDB_ID_INT_MIC_VR  509
 #define ACDB_ID_SPKR_PLAYBACK 607
-#define ACDB_ID_ALT_SPKR_PLAYBACK 609
 
 #define SAMP_RATE_INDX_8000	0
 #define SAMP_RATE_INDX_11025	1
@@ -102,12 +111,10 @@ namespace android {
 #define EQ_DISABLE   0x0000
 #define RX_IIR_ENABLE   0x0004
 #define RX_IIR_DISABLE  0x0000
-
-#define KEY_A1026_VR_MODE "vr_mode"
-
-#define MOD_PLAY 1
-#define MOD_REC  2
-
+#define CAD_HW_DEVICE_ID_SPKR_PHONE_DUAL_MIC_BROADSIDE      0x2B
+#define CAD_HW_DEVICE_ID_SPKR_PHONE_DUAL_MIC_ENDFIRE        0x2D
+#define CAD_HW_DEVICE_ID_HANDSET_DUAL_MIC_BROADSIDE         0x2C
+#define CAD_HW_DEVICE_ID_HANDSET_DUAL_MIC_ENDFIRE           0x2E
 struct msm_bt_endpoint {
     int tx;
     int rx;
@@ -131,34 +138,27 @@ struct rx_iir_filter {
     uint16_t iir_params[48];
 };
 
-struct msm_audio_config {
-    uint32_t buffer_size;
-    uint32_t buffer_count;
-    uint32_t channel_count;
-    uint32_t sample_rate;
-    uint32_t codec_type;
-    uint32_t unused[3];
-};
-
-struct msm_mute_info {
-    uint32_t mute;
-    uint32_t path;
+enum tty_modes {
+    TTY_OFF = 0,
+    TTY_VCO = 1,
+    TTY_HCO = 2,
+    TTY_FULL = 3
 };
 
 #define CODEC_TYPE_PCM 0
 #define PCM_FILL_BUFFER_COUNT 1
-#define AUDIO_HW_NUM_OUT_BUF 4  // Number of buffers in audio driver for output
+#define AUDIO_HW_NUM_OUT_BUF 2  // Number of buffers in audio driver for output
 // TODO: determine actual audio DSP and hardware latency
 #define AUDIO_HW_OUT_LATENCY_MS 0  // Additionnal latency introduced by audio DSP and hardware in ms
 #define AUDIO_HW_OUT_SAMPLERATE 44100 // Default audio output sample rate
 #define AUDIO_HW_OUT_CHANNELS (AudioSystem::CHANNEL_OUT_STEREO) // Default audio output channel mask
 #define AUDIO_HW_OUT_FORMAT (AudioSystem::PCM_16_BIT)  // Default audio output sample format
-#define AUDIO_HW_OUT_BUFSZ 3072  // Default audio output buffer size
+#define AUDIO_HW_OUT_BUFSZ 1024  // Default audio output buffer size
 
 #define AUDIO_HW_IN_SAMPLERATE 8000                 // Default audio input sample rate
 #define AUDIO_HW_IN_CHANNELS (AudioSystem::CHANNEL_IN_MONO) // Default audio input channel mask
+#define AUDIO_HW_IN_BUFSZ 1024  // Default audio input buffer size
 #define AUDIO_HW_IN_FORMAT (AudioSystem::PCM_16_BIT)  // Default audio input sample format
-#define AUDIO_HW_IN_BUFSZ 256  // Default audio input buffer size
 
 #define VOICE_VOLUME_MAX 5  // Maximum voice volume
 // ----------------------------------------------------------------------------
@@ -224,15 +224,9 @@ private:
     status_t    get_mMode();
     status_t    get_mRoutes();
     status_t    set_mRecordState(bool onoff);
-    status_t    doA1026_init();
     status_t    get_snd_dev();
-    status_t    get_batt_temp(int *batt_temp);
-    status_t    doAudience_A1026_Control(int Mode, bool Record, uint32_t Routes);
     status_t    doRouting();
-    status_t    updateACDB();
-    uint32_t    getACDB(int mode, int device);
     AudioStreamInMSM72xx*   getActiveInput_l();
-    status_t    do_tpa2018_control(int mode);
     size_t      getBufferSize(uint32_t sampleRate, int channelCount);
 
     class AudioStreamOutMSM72xx : public AudioStreamOut {
@@ -245,7 +239,7 @@ private:
                                 uint32_t *pChannels,
                                 uint32_t *pRate);
         virtual uint32_t    sampleRate() const { return mSampleRate; }
-        // must be 32-bit aligned
+        // Changed to 1024 from 4800
         virtual size_t      bufferSize() const { return mBufferSize; }
         virtual uint32_t    channels() const { return mChannels; }
         virtual int         format() const { return AUDIO_HW_OUT_FORMAT; }
@@ -259,6 +253,7 @@ private:
         virtual String8     getParameters(const String8& keys);
                 uint32_t    devices() { return mDevices; }
         virtual status_t    getRenderPosition(uint32_t *dspFrames);
+        virtual status_t    openDriver();
 
     private:
                 AudioHardware* mHardware;
@@ -313,23 +308,14 @@ private:
                 size_t      mBufferSize;
                 AudioSystem::audio_in_acoustics mAcoustics;
                 uint32_t    mDevices;
+                bool mFirstread;
     };
 
-            enum tty_modes {
-                TTY_MODE_OFF,
-                TTY_MODE_FULL,
-                TTY_MODE_VCO,
-                TTY_MODE_HCO
-            };
-
             static const uint32_t inputSamplingRates[];
-    Mutex       mA1026Lock;
-    bool        mA1026Init;
             bool        mRecordState;
             bool        mInit;
             bool        mMicMute;
             bool        mBluetoothNrec;
-            bool        mHACSetting;
             uint32_t    mBluetoothIdTx;
             uint32_t    mBluetoothIdRx;
             AudioStreamOutMSM72xx*  mOutput;
@@ -338,13 +324,13 @@ private:
             msm_bt_endpoint *mBTEndpoints;
             int mNumBTEndpoints;
             int mCurSndDevice;
-            int mNoiseSuppressionState;
             uint32_t mVoiceVolume;
+            bool        mDualMicEnabled;
+            int         mTtyMode;
 
      friend class AudioStreamInMSM72xx;
             Mutex       mLock;
             uint32_t        mRoutes[AudioSystem::NUM_MODES];
-            int         mTTYMode;
 };
 
 // ----------------------------------------------------------------------------
