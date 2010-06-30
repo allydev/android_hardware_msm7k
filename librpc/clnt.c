@@ -254,6 +254,7 @@ static void *rx_context(void *__u __attribute__((unused)))
                     }
                     D("%08x:%08x reading data.\n",
                        client->xdr->x_prog, client->xdr->x_vers);
+                    grabPartialWakeLock();
                     ret = client->xdr->xops->read(client->xdr);
                     if (ret == FALSE) {
                         E("%08x:%08x xops->read() error %s (%d)\n",
@@ -270,10 +271,9 @@ static void *rx_context(void *__u __attribute__((unused)))
                         }
 
                         pthread_mutex_unlock(&client->input_xdr_lock);
+                        releaseWakeLock();
                         continue;
                     }
-                    grabPartialWakeLock();
-                    client->xdr->xops->read(client->xdr);
                     client->input_xdr_busy = 1;
                     pthread_mutex_unlock(&client->input_xdr_lock);
 
