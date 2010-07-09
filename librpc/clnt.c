@@ -1,3 +1,5 @@
+/* Copyright (c) 2009-2010, Code Aurora Forum. */
+
 #include <rpc/rpc.h>
 #include <arpa/inet.h>
 #include <rpc/rpc_router_ioctl.h>
@@ -201,7 +203,6 @@ static void *cb_context(void *__u)
 static void *rx_context(void *__u __attribute__((unused)))
 {
     int n;
-    struct timeval tv;
     fd_set rfds;
     int ret;
     struct pollfd fd;
@@ -212,7 +213,6 @@ static void *rx_context(void *__u __attribute__((unused)))
         pthread_mutex_lock(&rx_mutex);
         rfds = rx_fdset;
         pthread_mutex_unlock(&rx_mutex);
-        tv.tv_sec = 0; tv.tv_usec = 500 * 1000;
 
         ret = poll(&fd, 1, timeout);
         if (ret > 0) {
@@ -224,11 +224,14 @@ static void *rx_context(void *__u __attribute__((unused)))
         }
         timeout = 0;
 
-        n = select(max_rxfd + 1, (fd_set *)&rfds, NULL, NULL, &tv);
+        n = select(max_rxfd + 1, (fd_set *)&rfds, NULL, NULL, NULL);
         if (n < 0) {
             E("select() error %s (%d)\n", strerror(errno), errno);
             continue;
         }
+
+	if (!num_clients)
+            break;
 
         if (n) {
             pthread_mutex_lock(&rx_mutex); /* sync access to the client list */
@@ -581,6 +584,9 @@ bool_t xdr_recv_reply_header (xdr_s_type *xdr, rpc_reply_header *reply)
     return TRUE;
 } /* xdr_recv_reply_header */
 
+/* pipe to wake up receive thread */
+static int wakeup_pipe[2];
+
 CLIENT *clnt_create(
     char * host,
     uint32 prog,
@@ -615,7 +621,14 @@ CLIENT *clnt_create(
 
         if (!num_clients) {
             FD_ZERO(&rx_fdset);
-            max_rxfd = 0;
+            if (pipe(wakeup_pipe) == -1) {
+               E("failed to create pipe\n");
+               free(client);
+               pthread_mutex_unlock(&rx_mutex);
+               return NULL;
+            }
+            FD_SET(wakeup_pipe[0], &rx_fdset);
+            max_rxfd = wakeup_pipe[0];
         }
 
         FD_SET(client->xdr->fd, &rx_fdset);
@@ -626,7 +639,11 @@ CLIENT *clnt_create(
         if (!num_clients++) {
             D("launching RX thread.\n");
             pthread_create(&rx_thread, NULL, rx_context, NULL);
-        }
+        } else {
+            /* client added, wake up rx_thread */
+            if (write(wakeup_pipe[1], "a", 1) < 0)
+	        E("error writing to pipe\n");
+	}
 
         pthread_mutexattr_init(&client->lock_attr);
 //      pthread_mutexattr_settype(&client->lock_attr, PTHREAD_MUTEX_RECURSIVE);
@@ -687,9 +704,17 @@ void clnt_destroy(CLIENT *client) {
             }
         }
         if (!num_clients) {
+            /* no clients, wake up rx_thread */
+            if (write(wakeup_pipe[1], "d", 1) < 0)
+	        E("error writing to pipe\n");
+
             D("stopping rx thread!\n");
             pthread_join(rx_thread, NULL);
             D("stopped rx thread\n");
+
+            FD_CLR(wakeup_pipe[0], &rx_fdset);
+            close(wakeup_pipe[0]);
+            close(wakeup_pipe[1]);
         }
         pthread_mutex_unlock(&rx_mutex); /* sync access to the client list */
  
