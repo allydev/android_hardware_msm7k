@@ -595,7 +595,7 @@ CLIENT *clnt_create(
 {
     CLIENT *client = calloc(1, sizeof(CLIENT));
     if (client) {
-        char name[256];
+        char name[20];
 
         /* for versions like 0x00010001, only compare against major version */
         if ((vers & 0xFFF00000) == 0)
@@ -606,8 +606,7 @@ CLIENT *clnt_create(
         /* Implment backwards compatibility */
         vers = (vers & 0x80000000) ? vers : vers & 0xFFFF0000;
 
-        snprintf(name, sizeof(name), "/dev/oncrpc/%08x:%08x",
-                 (uint32_t)prog, (int)vers);
+        snprintf(name, sizeof(name), "%08x:%08x", (uint32_t)prog, (int)vers);
         client->xdr = xdr_init_common(name, 1 /* client XDR */);
         if (!client->xdr) {
             E("failed to initialize client (permissions?)!\n");

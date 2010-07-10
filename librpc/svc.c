@@ -39,6 +39,8 @@
  * Copyright (C) 1984, Sun Microsystems, Inc.
  */
 
+/* Copyright (c) 2010, Code Aurora Forum. */
+
 #include <rpc/rpc.h>
 #include <sys/select.h>
 #include <sys/types.h>
@@ -234,8 +236,7 @@ bool_t svc_register (SVCXPRT *xprt, rpcprog_t prog, rpcvers_t vers,
         svc->x_vers = vers;        
     } else {
         V("RPC server %08x:%d is a real server.\n", (uint32_t)prog, (int)vers);
-        svc->xdr = xdr_init_common("/dev/oncrpc/00000000:0",
-                                   0 /* not a client XDR */);
+        svc->xdr = xdr_init_common("00000000:0", 0 /* not a client XDR */);
         if (svc->xdr == NULL) {
             E("failed to initialize service (permissions?)!\n");
             free(svc);

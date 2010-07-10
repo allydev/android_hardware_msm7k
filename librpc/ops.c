@@ -1,3 +1,5 @@
+/* Copyright (c) 2010, Code Aurora Forum. */
+
 #include <rpc/rpc.h>
 #include <rpc/rpc_router_ioctl.h>
 #include <debug.h>
@@ -13,10 +15,19 @@
 
 int r_open(const char *router)
 {
-  int handle = open(router, O_RDWR, 0);  
+  char name[32];
+  struct stat statbuf;
+  int handle;
+
+  if (stat("/dev/oncrpc", &statbuf) == 0)
+      snprintf(name, sizeof(name), "/dev/oncrpc/%s", router);
+  else
+      snprintf(name, sizeof(name), "/dev/%s", router);
+
+  handle = open(name, O_RDWR, 0);
 
   if(handle < 0)
-      E("error opening %s: %s\n", router, strerror(errno));
+      E("error opening %s: %s\n", name, strerror(errno));
   return handle;
 }
 
