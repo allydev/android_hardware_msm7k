@@ -17,6 +17,7 @@
 #include <math.h>
 
 //#define LOG_NDEBUG 0
+
 #define LOG_TAG "AudioHardwareMSM7X30"
 #include <utils/Log.h>
 #include <utils/String8.h>
@@ -712,7 +713,7 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
         if (mBluetoothId == 0) {
             LOGI("Using default acoustic parameters "
                  "(%s not in acoustic database)", value.string());
-            doRouting();
+            doRouting(NULL);
         }
     }
     key = String8(DUALMIC_KEY);
@@ -724,7 +725,7 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
             mDualMicEnabled = false;
             LOGI("DualMike feature Disabled");
         }
-        doRouting();
+        doRouting(NULL);
     }
 
     key = String8(TTY_MODE_KEY);
@@ -739,7 +740,7 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
             mTtyMode = TTY_OFF;
         }
         LOGI("Changed TTY Mode=%s", value.string());
-        doRouting();
+        doRouting(NULL);
     }
 
     return NO_ERROR;
@@ -1045,21 +1046,18 @@ status_t AudioHardware::doAudioRouteOrMute(uint32_t device)
                               mMode != AudioSystem::MODE_IN_CALL, mMicMute);
 }
 
-status_t AudioHardware::doRouting(uint32_t outputDevices)
+status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
 {
     Mutex::Autolock lock(mLock);
+    uint32_t outputDevices = mOutput->devices();
     status_t ret = NO_ERROR;
     int audProcess = (ADRC_DISABLE | EQ_DISABLE | RX_IIR_DISABLE);
     int sndDevice = -1;
-    AudioStreamInMSM72xx *input = getActiveInput_l();
-    uint32_t inputDevice = (input == NULL) ? 0 : input->devices();
-    if(outputDevices == -1) {
-        outputDevices = mOutput->devices();
-    }
 
 
 
-    if (inputDevice != 0) {
+    if (input != NULL) {
+        uint32_t inputDevice = input->devices();
         LOGI("do input routing device %x\n", inputDevice);
         // ignore routing device information when we start a recording in voice
         // call
@@ -1070,6 +1068,7 @@ status_t AudioHardware::doRouting(uint32_t outputDevices)
 #endif
           )
             return NO_ERROR;
+        if (inputDevice != 0) {
             if (inputDevice & AudioSystem::DEVICE_IN_BLUETOOTH_SCO_HEADSET) {
                 LOGI("Routing audio to Bluetooth PCM\n");
                 sndDevice = SND_DEVICE_BT;
@@ -1084,6 +1083,10 @@ status_t AudioHardware::doRouting(uint32_t outputDevices)
                     sndDevice = SND_DEVICE_HEADSET;
                 }
             } else {
+                    LOGI("Routing audio to Handset\n");
+                    sndDevice = SND_DEVICE_HANDSET;
+            }
+        }else {
                 if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                     LOGI("Routing audio to Speakerphone\n");
                     sndDevice = SND_DEVICE_SPEAKER;
@@ -1398,7 +1401,7 @@ status_t AudioHardware::AudioSessionOutMSM7xxx::setParameters(const String8& key
     if (param.getInt(key, device) == NO_ERROR) {
         mDevices = device;
         LOGV("set output routing %x", mDevices);
-        status = mHardware->doRouting(device);
+        status = mHardware->doRouting(NULL);
         param.remove(key);
     }
 
@@ -2193,8 +2196,12 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
 
 
     if (mState < AUDIO_INPUT_STARTED) {
+        // force routing to input device
+        mHardware->clearCurDevice();
+        mHardware->doRouting(this);
         if (ioctl(mFd, AUDIO_START, 0)) {
             LOGE("Error starting record");
+            standby();
             return -1;
         }
         mState = AUDIO_INPUT_STARTED;
@@ -2360,6 +2367,9 @@ status_t AudioHardware::AudioStreamInMSM72xx::standby()
             return 0;
         }
     }
+    // restore output routing if necessary
+    mHardware->clearCurDevice();
+    mHardware->doRouting(this);
     return NO_ERROR;
 }
 
@@ -2403,7 +2413,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::setParameters(const String8& keyVa
             status = BAD_VALUE;
         } else {
             mDevices = device;
-            status = mHardware->doRouting();
+            status = mHardware->doRouting(this);
         }
         param.remove(key);
     }
