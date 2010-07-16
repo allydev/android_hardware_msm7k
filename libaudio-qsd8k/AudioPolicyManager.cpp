@@ -87,10 +87,6 @@ uint32_t AudioPolicyManager::getDeviceForStrategy(routing_strategy strategy, boo
             // FALL THROUGH
 
         default:    // FORCE_NONE
-            device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADPHONE;
-            if (device) break;
-            device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET;
-            if (device) break;
             // when not in call:
             if (mPhoneState != AudioSystem::MODE_IN_CALL) {
                 // - if we are docked to a BT CAR dock, give A2DP preference over earpiece
@@ -107,6 +103,10 @@ uint32_t AudioPolicyManager::getDeviceForStrategy(routing_strategy strategy, boo
                 device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES;
                 if (device) break;
             }
+            device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADPHONE;
+            if (device) break;
+            device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET;
+            if (device) break;
             device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_EARPIECE;
             if (device == 0) {
                 LOGE("getDeviceForStrategy() earpiece device not found");
@@ -187,12 +187,6 @@ uint32_t AudioPolicyManager::getDeviceForStrategy(routing_strategy strategy, boo
             }
         }
 #endif
-        if (device2 == 0) {
-            device2 = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADPHONE;
-        }
-        if (device2 == 0) {
-            device2 = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET;
-        }
 #ifdef WITH_A2DP
         if (mA2dpOutput != 0) {
             if (device2 == 0) {
@@ -206,6 +200,12 @@ uint32_t AudioPolicyManager::getDeviceForStrategy(routing_strategy strategy, boo
             }
         }
 #endif
+        if (device2 == 0) {
+            device2 = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADPHONE;
+        }
+        if (device2 == 0) {
+            device2 = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_WIRED_HEADSET;
+        }
         if (device2 == 0) {
             device = mAvailableOutputDevices & AudioSystem::DEVICE_OUT_SPEAKER;
         }
