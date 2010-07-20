@@ -126,6 +126,7 @@ static int get_format(int format) {
     case COPYBIT_FORMAT_BGRA_8888:     return MDP_BGRA_8888;
     case COPYBIT_FORMAT_YCbCr_422_SP:  return MDP_Y_CBCR_H2V1;
     case COPYBIT_FORMAT_YCbCr_420_SP:  return MDP_Y_CBCR_H2V2;
+    case COPYBIT_FORMAT_YCrCb_420_SP_INTERLACE: return MDP_Y_CBCR_H2V2;
     }
     return -1;
 }
@@ -202,10 +203,10 @@ static void set_rects(struct copybit_context_t *dev,
 }
 
 /** setup mdp request */
-static void set_infos(struct copybit_context_t *dev, struct mdp_blit_req *req) {
+static void set_infos(struct copybit_context_t *dev, struct mdp_blit_req *req, int flags) {
     req->alpha = dev->mAlpha;
     req->transp_mask = MDP_TRANSP_NOP;
-    req->flags = dev->mFlags;
+    req->flags = dev->mFlags | flags;
 }
 
 /** copy the bits */
@@ -391,7 +392,11 @@ static int stretch_copybit(
         while ((status == 0) && region->next(region, &clip)) {
             intersect(&clip, &bounds, &clip);
             mdp_blit_req* req = &list.req[list.count];
-            set_infos(ctx, req);
+            int flags = 0;
+            if(src->format == COPYBIT_FORMAT_YCrCb_420_SP_INTERLACE)
+                flags = MDP_DEINTERLACE;
+
+            set_infos(ctx, req, flags);
             set_image(&req->dst, dst);
             set_image(&req->src, src);
             set_rects(ctx, req, dst_rect, src_rect, &clip);
