@@ -1154,17 +1154,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                     sndDevice = SND_DEVICE_HANDSET;
                 }
             }
-        } else {
-            if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
-                LOGI("Routing audio to Speakerphone\n");
-                sndDevice = SND_DEVICE_SPEAKER;
-                audProcess = (ADRC_ENABLE | EQ_ENABLE | RX_IIR_ENABLE);
-            } else {
-                LOGI("Routing audio to Handset\n");
-                sndDevice = SND_DEVICE_HANDSET;
-            }
         }
-        // if inputDevice == 0, restore output routing
     }
     // if inputDevice == 0, restore output routing
 
