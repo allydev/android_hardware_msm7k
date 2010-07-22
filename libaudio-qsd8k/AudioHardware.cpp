@@ -1151,11 +1151,6 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
              return BAD_VALUE;
     }
 
-    if((*pFormat == AudioSystem::AAC) && (*pChannels & (AudioSystem::CHANNEL_IN_VOICE_DNLINK |  AudioSystem::CHANNEL_IN_VOICE_UPLINK))) {
-        LOGE("voice call recording in AAC format does not support");
-        return BAD_VALUE;
-    }
-
     if (pRate == 0) {
         return BAD_VALUE;
     }
@@ -1191,6 +1186,30 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
            }
            mFd = status;
 
+          mDevices = devices;
+          mChannels = *pChannels;
+
+          if (mDevices == AudioSystem::DEVICE_IN_VOICE_CALL)
+          {
+              if ((mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) &&
+                   (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK)) {
+                   LOGI("Recording Source: Voice Call Both Uplink and Downlink");
+                  voc_rec_cfg.rec_mode = VOC_REC_BOTH;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_DNLINK) {
+                  LOGI("Recording Source: Voice Call DownLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_DOWNLINK;
+              } else if (mChannels & AudioSystem::CHANNEL_IN_VOICE_UPLINK) {
+                  LOGI("Recording Source: Voice Call UpLink");
+                  voc_rec_cfg.rec_mode = VOC_REC_UPLINK;
+              }
+
+              if (ioctl(mFd, AUDIO_SET_INCALL, &voc_rec_cfg))
+              {
+                 LOGE("Error: AUDIO_SET_INCALL failed\n");
+                 goto  Error;
+              }
+          }
+
           // configuration
           LOGV("get config");
           struct msm_audio_config config;
@@ -1201,7 +1220,11 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
           }
 
           LOGV("set config");
-          config.channel_count = AudioSystem::popCount(*pChannels);
+          if (*pChannels & (AudioSystem::CHANNEL_IN_MONO))
+              config.channel_count =  1;
+          else if (*pChannels & (AudioSystem::CHANNEL_IN_STEREO))
+              config.channel_count =  2;
+
           config.sample_rate = *pRate;
           config.buffer_size = mBufferSize;
           config.buffer_count = 2;
