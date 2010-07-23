@@ -158,7 +158,8 @@ static void set_rects(struct copybit_context_t *dev,
                       struct mdp_blit_req *e,
                       const struct copybit_rect_t *dst,
                       const struct copybit_rect_t *src,
-                      const struct copybit_rect_t *scissor) {
+                      const struct copybit_rect_t *scissor,
+                      uint32_t padding) {
     struct copybit_rect_t clip;
     intersect(&clip, scissor, dst);
 
@@ -187,7 +188,7 @@ static void set_rects(struct copybit_context_t *dev,
     MULDIV(&e->src_rect.y, &e->src_rect.h, src->b - src->t, H);
     if (dev->mFlags & COPYBIT_TRANSFORM_FLIP_V) {
         if (dev->mFlags & COPYBIT_TRANSFORM_ROT_90) {
-            e->src_rect.x = e->src.width - (e->src_rect.x + e->src_rect.w);
+            e->src_rect.x = e->src.width - (e->src_rect.x + e->src_rect.w) - padding;
         }else{
             e->src_rect.y = e->src.height - (e->src_rect.y + e->src_rect.h);
         }
@@ -197,7 +198,7 @@ static void set_rects(struct copybit_context_t *dev,
         if (dev->mFlags & COPYBIT_TRANSFORM_ROT_90) {
             e->src_rect.y = e->src.height - (e->src_rect.y + e->src_rect.h);
         }else{
-            e->src_rect.x = e->src.width - (e->src_rect.x + e->src_rect.w);
+            e->src_rect.x = e->src.width - (e->src_rect.x + e->src_rect.w) - padding;
         }
     }
 }
@@ -399,7 +400,7 @@ static int stretch_copybit(
             set_infos(ctx, req, flags);
             set_image(&req->dst, dst);
             set_image(&req->src, src);
-            set_rects(ctx, req, dst_rect, src_rect, &clip);
+            set_rects(ctx, req, dst_rect, src_rect, &clip, src->padding);
 
             if (req->src_rect.w<=0 || req->src_rect.h<=0)
                 continue;
