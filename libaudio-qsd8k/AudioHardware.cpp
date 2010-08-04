@@ -222,6 +222,23 @@ void AudioHardware::closeInputStream(AudioStreamIn* in) {
     }
 }
 
+static status_t set_volume_rpc(uint32_t volume)
+{
+    int fd = -1;
+    fd = open("/dev/msm_audio_ctl", O_RDWR);
+    if (fd < 0) {
+        LOGE("Cannot open msm_audio_ctl device\n");
+        return -1;
+    }
+    volume *= 20; //percentage
+    LOGD("Setting in-call volume to %d\n", volume);
+    if (ioctl(fd, AUDIO_SET_VOLUME, &volume)) {
+        LOGW("Cannot set volume on current device\n");
+    }
+    close(fd);
+    return NO_ERROR;
+}
+
 status_t AudioHardware::setMode(int mode)
 {
    int prevMode = mMode;
@@ -233,6 +250,16 @@ status_t AudioHardware::setMode(int mode)
         if (((prevMode != AudioSystem::MODE_IN_CALL) && (mMode == AudioSystem::MODE_IN_CALL)) ||
             ((prevMode == AudioSystem::MODE_IN_CALL) && (mMode != AudioSystem::MODE_IN_CALL))) {
             clearCurDevice();
+        }
+
+        // If mode is ringtone, ensure to set the voice volume to 0.
+        // In case of CDMA network, there are cases where the voice call is
+        // heared even in the Ring tone mode. Make sure no voice is transmitted
+        // during Ring state.
+        if (mode == AudioSystem::MODE_RINGTONE)
+        {
+          LOGV("Setting Voice volume to 0");
+          set_volume_rpc(0);
         }
     }
 
@@ -447,23 +474,6 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
         default:
             return getBufferSize(sampleRate, channelCount);
     }
-}
-
-static status_t set_volume_rpc(uint32_t volume)
-{
-    int fd = -1;
-    fd = open("/dev/msm_audio_ctl", O_RDWR);
-    if (fd < 0) {
-        LOGE("Cannot open msm_audio_ctl device\n");
-        return -1;
-    }
-    volume *= 20; //percentage
-    LOGD("Setting in-call volume to %d\n", volume);
-    if (ioctl(fd, AUDIO_SET_VOLUME, &volume)) {
-        LOGW("Cannot set volume on current device\n");
-    }
-    close(fd);
-    return NO_ERROR;
 }
 
 status_t AudioHardware::setVoiceVolume(float v)
@@ -801,6 +811,12 @@ status_t AudioHardware::doRouting()
         mCurSndDevice = sndDevice;
         if (mMode == AudioSystem::MODE_IN_CALL) {
             set_volume_rpc(mVoiceVolume);
+        }
+        // In few CDMA network, voice is heared even if the phone is in ring
+        // mode. Ensure that the voice is muted at this point.
+        else if (mMode == AudioSystem::MODE_RINGTONE) {
+            LOGV("Setting Voice volume to 0");
+            set_volume_rpc(0);
         }
     }
 
