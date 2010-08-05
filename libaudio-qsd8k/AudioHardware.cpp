@@ -355,7 +355,7 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
             LOGI("Using default acoustic parameters "
                  "(%s not in acoustic database)", value.string());
         }
-        doRouting();
+        doRouting(NULL);
     }
 
     key = String8(DUALMIC_KEY);
@@ -367,7 +367,7 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
             mDualMicEnabled = false;
             LOGI("DualMike feature Disabled");
         }
-        doRouting();
+        doRouting(NULL);
     }
 
     key = String8(TTY_MODE_KEY);
@@ -381,7 +381,7 @@ status_t AudioHardware::setParameters(const String8& keyValuePairs)
         } else {
             mTtyMode = TTY_OFF;
         }
-        doRouting();
+        doRouting(NULL);
     }
 
     return NO_ERROR;
@@ -684,22 +684,22 @@ status_t AudioHardware::get_snd_dev(void)
     return mCurSndDevice;
 }
 
-status_t AudioHardware::doRouting()
+status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
 {
     Mutex::Autolock lock(mLock);
     uint32_t outputDevices = mOutput->devices();
-    AudioStreamInMSM72xx *input = getActiveInput_l();
-    uint32_t inputDevice = (input == NULL) ? 0 : input->devices();
     status_t ret = NO_ERROR;
     int sndDevice = -1;
 
-    if (inputDevice != 0) {
+    if (input != NULL) {
+        uint32_t inputDevice = input->devices();
         LOGI("do input routing device %x\n", inputDevice);
         // ignore routing device information when we start a recording in voice
         // call
         // Recording will happen through currently active tx device
         if(inputDevice == AudioSystem::DEVICE_IN_VOICE_CALL)
             return NO_ERROR;
+        if (inputDevice != 0) {
             if (inputDevice & AudioSystem::DEVICE_IN_BLUETOOTH_SCO_HEADSET) {
                 LOGI("Routing audio to Bluetooth PCM\n");
                 sndDevice = SND_DEVICE_BT;
@@ -731,6 +731,10 @@ status_t AudioHardware::doRouting()
                     sndDevice = SND_DEVICE_NO_MIC_HEADSET_BACK_MIC;
                 }
             } else {
+                LOGI("Routing audio to Handset\n");
+                sndDevice = SND_DEVICE_HANDSET;
+            }
+        } else {
                 if (outputDevices & AudioSystem::DEVICE_OUT_SPEAKER) {
                     LOGI("Routing audio to Speakerphone\n");
                     sndDevice = SND_DEVICE_SPEAKER;
@@ -1108,7 +1112,7 @@ status_t AudioHardware::AudioStreamOutMSM72xx::setParameters(const String8& keyV
     if (param.getInt(key, device) == NO_ERROR) {
         mDevices = device;
         LOGV("set output routing %x", mDevices);
-        status = mHardware->doRouting();
+        status = mHardware->doRouting(NULL);
         param.remove(key);
     }
 
@@ -1586,8 +1590,11 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
 
     if (mState < AUDIO_INPUT_STARTED) {
         mHardware->set_mRecordState(1);
+        mHardware->clearCurDevice();
+        mHardware->doRouting(this);
         if (ioctl(mFd, AUDIO_START, 0)) {
             LOGE("Error starting record");
+            standby();
             return -1;
         }
         LOGI("AUDIO_START: start kernel pcm_in driver.");
@@ -1751,6 +1758,9 @@ status_t AudioHardware::AudioStreamInMSM72xx::standby()
         mState = AUDIO_INPUT_CLOSED;
     }
     LOGI("AudioHardware PCM record is going to standby.");
+    // restore output routing if necessary
+    mHardware->clearCurDevice();
+    mHardware->doRouting(this);
     return NO_ERROR;
 }
 
@@ -1794,7 +1804,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::setParameters(const String8& keyVa
             status = BAD_VALUE;
         } else {
             mDevices = device;
-            status = mHardware->doRouting();
+            status = mHardware->doRouting(this);
         }
         param.remove(key);
     }

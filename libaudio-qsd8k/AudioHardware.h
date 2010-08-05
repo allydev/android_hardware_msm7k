@@ -225,7 +225,7 @@ private:
     status_t    get_mRoutes();
     status_t    set_mRecordState(bool onoff);
     status_t    get_snd_dev();
-    status_t    doRouting();
+    status_t    doRouting(AudioStreamInMSM72xx *input);
     AudioStreamInMSM72xx*   getActiveInput_l();
     size_t      getBufferSize(uint32_t sampleRate, int channelCount);
 
