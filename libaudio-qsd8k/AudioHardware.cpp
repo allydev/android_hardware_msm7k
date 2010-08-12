@@ -478,6 +478,12 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
 
 status_t AudioHardware::setVoiceVolume(float v)
 {
+    if (mMode != AudioSystem::MODE_IN_CALL)
+    {
+        LOGE("setVoiceVolume called in wrong mode. Rejecting the call");
+        return NO_ERROR;
+    }
+
     if (v < 0.0) {
         LOGW("setVoiceVolume(%f) under 0.0, assuming 0.0\n", v);
         v = 0.0;
