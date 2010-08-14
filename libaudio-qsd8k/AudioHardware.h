@@ -157,7 +157,7 @@ enum tty_modes {
 
 #define AUDIO_HW_IN_SAMPLERATE 8000                 // Default audio input sample rate
 #define AUDIO_HW_IN_CHANNELS (AudioSystem::CHANNEL_IN_MONO) // Default audio input channel mask
-#define AUDIO_HW_IN_BUFSZ 1024  // Default audio input buffer size
+#define AUDIO_HW_IN_BUFSZ 2048  // Default audio input buffer size
 #define AUDIO_HW_IN_FORMAT (AudioSystem::PCM_16_BIT)  // Default audio input sample format
 
 #define VOICE_VOLUME_MAX 5  // Maximum voice volume

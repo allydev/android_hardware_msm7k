@@ -420,24 +420,6 @@ static unsigned calculate_audpre_table_index(unsigned index)
         default:     return -1;
     }
 }
-size_t AudioHardware::getBufferSize(uint32_t sampleRate, int channelCount)
-{
-    size_t bufSize;
-
-    if (sampleRate < 11025) {
-        bufSize = 256;
-    } else if (sampleRate < 22050) {
-        bufSize = 512;
-    } else if (sampleRate < 32000) {
-        bufSize = 768;
-    } else if (sampleRate < 44100) {
-        bufSize = 1024;
-    } else {
-        bufSize = 1536;
-    }
-
-    return bufSize*channelCount;
-}
 
 size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int channelCount)
 {
@@ -472,7 +454,7 @@ size_t AudioHardware::getInputBufferSize(uint32_t sampleRate, int format, int ch
             return 2048;
             break;
         default:
-            return getBufferSize(sampleRate, channelCount);
+            return AUDIO_HW_IN_BUFSZ * channelCount;
     }
 }
 
@@ -1003,7 +985,7 @@ status_t AudioHardware::AudioStreamOutMSM72xx::set(
 
     mChannels = lChannels;
     mSampleRate = lRate;
-    mBufferSize = hw->getBufferSize(lRate, AudioSystem::popCount(lChannels));
+    mBufferSize = AUDIO_HW_OUT_BUFSZ * AudioSystem::popCount(lChannels);
 
     if (mStandby) {
         status_t status = openDriver();
@@ -1192,7 +1174,7 @@ status_t AudioHardware::AudioStreamInMSM72xx::set(
     }
 
     mHardware = hw;
-    mBufferSize = hw->getBufferSize(*pRate, AudioSystem::popCount(*pChannels));
+    mBufferSize = AUDIO_HW_IN_BUFSZ * AudioSystem::popCount(*pChannels);
 
     LOGV("AudioStreamInMSM72xx::set(%d, %x, %u)", *pFormat, *pChannels, *pRate);
     if (mFd >= 0) {
