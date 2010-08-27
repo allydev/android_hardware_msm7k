@@ -1589,30 +1589,12 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
         mState = AUDIO_INPUT_STARTED;
     }
 
-    // Read 10frames of data every time. AudioReacord checks if the read data
-    // is equal to 10 frames, if not it will be dropped
-    if ( mFormat == AudioSystem::AMR_NB ) {
-        if ( bytes < 320 ) {
-            LOGE("Error, the buffer size passed is not compatible %d", bytes);
-            return -2;
-        }
-    } else if ( mFormat == AudioSystem::EVRC ) {
-        if ( bytes < 230 ) {
-            LOGE("Error, the buffer size passed is not compatible %d", bytes);
-            return -2;
-        }
-    } else if ( mFormat == AudioSystem::QCELP ) {
-        if ( bytes < 350 ) {
-            LOGE("Error, the buffer size passed is not compatible %d", bytes);
-            return -2;
-        }
-    } else if ( mFormat == AudioSystem::AAC ) {
-        if ( bytes < 2048 ) {
-            LOGE("Error, the buffer size passed is not compatible %d", bytes);
-            return -2;
-        }
+    if (mFormat == AudioSystem::AAC) {
+       if (bytes < 512) {
+        LOGE("Error, the buffer size passed is not compatible %d", bytes);
+        return -1;
+       }
     }
-
     bytes = 0;
     if (mFormat == AudioSystem::AAC)
     {

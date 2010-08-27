@@ -1904,29 +1904,6 @@ ssize_t AudioHardware::AudioStreamInMSM72xx::read( void* buffer, ssize_t bytes)
         }
     }
 
-    // This is the minimum buffer size that needs to be passed to kernel driver.
-    if ( mFormat == AudioSystem::AMR_NB ) {
-        if ( bytes < 320 ) {
-            LOGE("Error, the buffer size passed is not compatible %d", bytes);
-            return -2;
-        }
-    } else if ( mFormat == AudioSystem::EVRC ) {
-        if ( bytes < 230 ) {
-            LOGE("Error, the buffer size passed is not compatible %d", bytes);
-            return -2;
-        }
-    } else if ( mFormat == AudioSystem::QCELP ) {
-        if ( bytes < 350 ) {
-            LOGE("Error, the buffer size passed is not compatible %d", bytes);
-            return -2;
-        }
-    } else if ( mFormat == AudioSystem::AAC ) {
-        if ( bytes < 2048 ) {
-            LOGE("Error, the buffer size passed is not compatible %d", bytes);
-            return -2;
-        }
-    }
-
     // Resetting the bytes value, to return the appropriate read value
     bytes = 0;
     if (mFormat == AudioSystem::AAC)
