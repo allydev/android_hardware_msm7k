@@ -208,6 +208,9 @@ static void set_infos(struct copybit_context_t *dev, struct mdp_blit_req *req, i
     req->alpha = dev->mAlpha;
     req->transp_mask = MDP_TRANSP_NOP;
     req->flags = dev->mFlags | flags;
+#if defined(COPYBIT_QSD8K)
+    req->flags |= MDP_BLEND_FG_PREMULT;
+#endif
 }
 
 /** copy the bits */
