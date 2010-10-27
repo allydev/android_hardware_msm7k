@@ -1,5 +1,6 @@
 /*
-** Copyright 2008, Google Inc.
+** Copyright 2008, The Android Open-Source Project
+** Copyright (c) 2010, Code Aurora Forum. All rights reserved.
 **
 ** Licensed under the Apache License, Version 2.0 (the "License");
 ** you may not use this file except in compliance with the License.
@@ -840,8 +841,11 @@ static int msm72xx_enable_audpp(uint16_t enable_mask, uint32_t device)
     int fd;
     int device_id=0;
 
-    if (!audpp_filter_inited) return -EINVAL;
-
+    if (!audpp_filter_inited)
+    {
+            LOGE("Parsing error in AudioFilter.csv.");
+            return -EINVAL;
+    }
     LOGI("SET DEVICE - %d",device);
     if(device == SND_DEVICE_SPEAKER)
     {
@@ -867,13 +871,22 @@ static int msm72xx_enable_audpp(uint16_t enable_mask, uint32_t device)
 
     if(mbadrc_filter_exists[device_id])
     {
-       if (ioctl(fd, AUDIO_SET_MBADRC, &mbadrc_cfg[device_id]) < 0)
-        {
-            LOGE("set mbadrc filter error");
-        }
+       if(enable_mask & MBADRC_ENABLE)
+       {
+            enable_mask &= ~ADRC_ENABLE;
+            LOGV("MBADRC Enabled %d", enable_mask);
+
+            if (ioctl(fd, AUDIO_SET_MBADRC, &mbadrc_cfg[device_id]) < 0)
+            {
+                LOGE("set mbadrc filter error");
+            }
+       }
     }
     else if (adrc_filter_exists[device_id])
     {
+        enable_mask &= ~MBADRC_ENABLE;
+        LOGV("ADRC Enabled %d", enable_mask);
+
         if (adrc_flag[device_id] == 0 && (enable_mask & ADRC_ENABLE))
             enable_mask &= ~ADRC_ENABLE;
         else if(enable_mask & ADRC_ENABLE)
