@@ -153,7 +153,7 @@ enum tty_modes {
 #define AUDIO_HW_OUT_SAMPLERATE 44100 // Default audio output sample rate
 #define AUDIO_HW_OUT_CHANNELS (AudioSystem::CHANNEL_OUT_STEREO) // Default audio output channel mask
 #define AUDIO_HW_OUT_FORMAT (AudioSystem::PCM_16_BIT)  // Default audio output sample format
-#define AUDIO_HW_OUT_BUFSZ 1024  // Default audio output buffer size
+#define AUDIO_HW_OUT_BUFSZ 3072  // Default audio output buffer size
 
 #define AUDIO_HW_IN_SAMPLERATE 8000                 // Default audio input sample rate
 #define AUDIO_HW_IN_CHANNELS (AudioSystem::CHANNEL_IN_MONO) // Default audio input channel mask
