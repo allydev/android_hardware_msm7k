@@ -98,7 +98,7 @@ AudioHardware::AudioHardware() :
    }
 
     m7xsnddriverfd = open("/dev/msm_snd", O_RDWR);
-    if (m7xsnddriverfd >= 0) {
+/*    if (m7xsnddriverfd >= 0) {
         int rc = ioctl(m7xsnddriverfd, SND_GET_NUM_ENDPOINTS, &mNumSndEndpoints);
         if (rc >= 0) {
             mSndEndpoints = new msm_snd_endpoint[mNumSndEndpoints];
@@ -109,7 +109,32 @@ AudioHardware::AudioHardware() :
                 ept->id = cnt;
                 ioctl(m7xsnddriverfd, SND_GET_ENDPOINT, ept);
                 LOGV("cnt = %d ept->name = %s ept->id = %d\n", cnt, ept->name, ept->id);
-#define CHECK_FOR(desc) if (!strcmp(ept->name, #desc)) SND_DEVICE_##desc = ept->id;
+*/
+
+if (m7xsnddriverfd < 0) {
+         LOGE("Could not open MSM SND driver.");
+         return;
+    }
+
+    int rc = ioctl(m7xsnddriverfd, SND_GET_NUM_ENDPOINTS, &mNumSndEndpoints);
+    if (rc < 0) {
+        LOGE("Error on ioctl SND_GET_NUM_ENDPOINTS!");
+        return;
+    }
+    mSndEndpoints = new msm_snd_endpoint[mNumSndEndpoints];
+    mInit = true;
+    LOGV("constructed (%d SND endpoints)", mNumSndEndpoints);
+    struct msm_snd_endpoint *ept = mSndEndpoints;
+    for (int cnt = 0; cnt < mNumSndEndpoints; cnt++, ept++) {
+        ept->id = cnt;
+        ioctl(m7xsnddriverfd, SND_GET_ENDPOINT, ept);
+        LOGV("cnt = %d ept->name = %s ept->id = %d\n", cnt, ept->name, ept->id);
+#define CHECK_FOR(desc) \
+if (!strcmp(ept->name, #desc)) { \
+SND_DEVICE_##desc = ept->id; \
+LOGD("BT MATCH " #desc); \
+} else
+//#define CHECK_FOR(desc) if (!strcmp(ept->name, #desc)) SND_DEVICE_##desc = ept->id;
                 CHECK_FOR(CURRENT);
                 CHECK_FOR(HANDSET);
                 CHECK_FOR(SPEAKER);
@@ -120,12 +145,16 @@ AudioHardware::AudioHardware() :
                 CHECK_FOR(IN_S_SADC_OUT_HANDSET);
                 CHECK_FOR(IN_S_SADC_OUT_SPEAKER_PHONE);
                 CHECK_FOR(TTY_HEADSET);
-                CHECK_FOR(TTY_HCO);
+                CHECK_FOR(CARKIT);
+                CHECK_FOR(FM_SPEAKER);
+		CHECK_FOR(FM_HEADSET);
+		CHECK_FOR(NO_MIC_HEADSET);
+		CHECK_FOR(TTY_HCO);
                 CHECK_FOR(TTY_VCO);
+ { LOGD("Not handling endpoint %s",ept->name); }
+
 #undef CHECK_FOR
-            }
         }
-        else LOGE("Could not retrieve number of MSM SND endpoints.");
 
         int AUTO_VOLUME_ENABLED = 1; // setting enabled as default
 
@@ -167,8 +196,8 @@ AudioHardware::AudioHardware() :
         ioctl(m7xsnddriverfd, SND_AVC_CTL, &AUTO_VOLUME_ENABLED);
         ioctl(m7xsnddriverfd, SND_AGC_CTL, &AUTO_VOLUME_ENABLED);
     }
-	else LOGE("Could not open MSM SND driver.");
-}
+//	else LOGE("Could not open MSM SND driver.");
+//}
 
 AudioHardware::~AudioHardware()
 {
